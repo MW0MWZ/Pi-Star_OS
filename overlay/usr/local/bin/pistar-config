@@ -1,0 +1,208 @@
+#!/bin/sh
+# pistar-config - Boot configuration processor
+# Part of Pi-Star OS
+#
+# Sources, in priority order:
+#   1. /boot/firmware/pistar-config.txt  — fresh settings from user
+#   2. /data/etc/pistar-user.conf        — saved settings from prior boot
+#
+# When pistar-config.txt is present, settings are applied and then
+# persisted to /data/etc/pistar-user.conf so they survive A/B upgrades.
+# The pistar-config.txt is DELETED after processing for security.
+
+CONFIG_FILE="/boot/firmware/pistar-config.txt"
+SAVED_CONF="/data/etc/pistar-user.conf"
+SLOT_CONF="/boot/firmware/slot.conf"
+LOG_FILE="/var/log/pistar-config.log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# ── Phase 1: Source selection ────────────────────────────────────────
+SOURCE=""
+if [ -f "$CONFIG_FILE" ]; then
+    SOURCE="$CONFIG_FILE"
+    log "Processing Pi-Star OS configuration from pistar-config.txt..."
+elif [ -f "$SAVED_CONF" ]; then
+    SOURCE="$SAVED_CONF"
+    log "Applying saved configuration from $SAVED_CONF..."
+else
+    exit 0
+fi
+
+# Log active slot for diagnostics
+if [ -f "$SLOT_CONF" ]; then
+    # shellcheck disable=SC1090
+    . "$SLOT_CONF"
+    log "Active slot: ${ACTIVE_SLOT:-unknown}, pending: ${PENDING:-unknown}"
+fi
+
+# Track which source we came from
+FROM_CONFIG_TXT=false
+[ "$SOURCE" = "$CONFIG_FILE" ] && FROM_CONFIG_TXT=true
+
+# ── Phase 2: Parse and apply ─────────────────────────────────────────
+WIFI_COUNT=0
+SAVE_HOSTNAME=""
+SAVE_TIMEZONE=""
+SAVE_LOCALE=""
+SAVE_SSH_PASSWORD=""
+
+while IFS='=' read -r key value; do
+    # Skip comments and empty lines
+    case "$key" in
+        "#"*|"") continue ;;
+    esac
+
+    # Trim whitespace
+    key=$(echo "$key" | tr -d ' ')
+    value=$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    case "$key" in
+        wifi_ssid|wifi_ssid_*)
+            # Only process from pistar-config.txt — WiFi persists via bind mount
+            if $FROM_CONFIG_TXT; then
+                priority=$(echo "$key" | sed 's/wifi_ssid_*//')
+                [ -z "$priority" ] && priority=1
+                eval "WIFI_SSID_${priority}=\"\$value\""
+                WIFI_COUNT=$((WIFI_COUNT + 1))
+                log "Found WiFi network: $value (priority $priority)"
+            fi
+            ;;
+
+        wifi_password|wifi_password_*)
+            if $FROM_CONFIG_TXT; then
+                priority=$(echo "$key" | sed 's/wifi_password_*//')
+                [ -z "$priority" ] && priority=1
+                eval "WIFI_PASS_${priority}=\"\$value\""
+            fi
+            ;;
+
+        wifi_country)
+            if $FROM_CONFIG_TXT; then
+                log "Setting WiFi country: $value"
+                WIFI_COUNTRY="$value"
+            fi
+            ;;
+
+        user_password)
+            # Only process plaintext passwords from pistar-config.txt
+            if $FROM_CONFIG_TXT; then
+                log "Setting pi-star user password"
+                echo "pi-star:$value" | chpasswd
+            fi
+            ;;
+
+        user_password_hash)
+            # Only process from saved config — restore hash directly to shadow
+            if ! $FROM_CONFIG_TXT; then
+                log "Restoring pi-star password hash"
+                sed -i "s|^pi-star:[^:]*:|pi-star:${value}:|" /etc/shadow
+            fi
+            ;;
+
+        enable_ssh_password)
+            SAVE_SSH_PASSWORD="$value"
+            if [ "$value" = "true" ]; then
+                log "Enabling SSH password authentication"
+                sed -i 's/DROPBEAR_OPTS=.*/DROPBEAR_OPTS="-B"/' /etc/conf.d/dropbear
+            else
+                log "SSH key-only authentication enabled"
+                sed -i 's/DROPBEAR_OPTS=.*/DROPBEAR_OPTS="-B -s"/' /etc/conf.d/dropbear
+            fi
+            ;;
+
+        ssh_key)
+            # Only process from pistar-config.txt — keys persist via bind mount
+            if $FROM_CONFIG_TXT; then
+                log "Adding SSH public key"
+                mkdir -p /home/pi-star/.ssh
+                echo "$value" >> /home/pi-star/.ssh/authorized_keys
+                chmod 700 /home/pi-star/.ssh
+                chmod 600 /home/pi-star/.ssh/authorized_keys
+                chown -R pi-star:pi-star /home/pi-star/.ssh
+            fi
+            ;;
+
+        hostname)
+            SAVE_HOSTNAME="$value"
+            log "Setting hostname: $value"
+            echo "$value" > /etc/hostname
+            hostname "$value"
+            sed -i "s/127.0.1.1.*/127.0.1.1   $value/" /etc/hosts
+            ;;
+
+        timezone)
+            SAVE_TIMEZONE="$value"
+            log "Setting timezone: $value"
+            if [ -f "/usr/share/zoneinfo/$value" ]; then
+                cp "/usr/share/zoneinfo/$value" /etc/localtime
+                echo "$value" > /etc/timezone
+            else
+                log "WARNING: timezone '$value' not found"
+            fi
+            ;;
+
+        locale)
+            SAVE_LOCALE="$value"
+            log "Setting locale: $value"
+            mkdir -p /etc/profile.d
+            echo "export LANG=$value" > /etc/profile.d/locale.sh
+            ;;
+    esac
+done < "$SOURCE"
+
+# Build wpa_supplicant configuration (only from pistar-config.txt)
+if [ "$WIFI_COUNT" -gt 0 ]; then
+    log "Building wpa_supplicant configuration..."
+    WPA_CONF="/etc/wpa_supplicant/wpa_supplicant.conf"
+
+    cat > "$WPA_CONF" <<WPA_HEADER
+ctrl_interface=/var/run/wpa_supplicant
+ctrl_interface_group=0
+update_config=1
+country=${WIFI_COUNTRY:-GB}
+WPA_HEADER
+
+    for i in 10 9 8 7 6 5 4 3 2 1; do
+        eval "ssid=\$WIFI_SSID_${i}"
+        eval "pass=\$WIFI_PASS_${i}"
+
+        if [ -n "$ssid" ] && [ -n "$pass" ]; then
+            log "Adding network: $ssid (priority $i)"
+            wpa_passphrase "$ssid" "$pass" | sed "s/}/\tpriority=$i\n}/" >> "$WPA_CONF"
+        fi
+    done
+fi
+
+# ── Phase 3: Save and clean up (only from pistar-config.txt) ─────────
+if $FROM_CONFIG_TXT; then
+    # Extract the password hash that chpasswd just set
+    HASH=$(sed -n 's/^pi-star:\([^:]*\):.*/\1/p' /etc/shadow)
+
+    # Ensure /data/etc exists
+    mkdir -p /data/etc
+
+    # Write saved config (overwrites any previous)
+    cat > "$SAVED_CONF" <<EOF
+# Pi-Star OS saved user configuration
+# Generated: $(date '+%Y-%m-%d %H:%M:%S')
+# Do not edit — this file is overwritten when pistar-config.txt is processed.
+user_password_hash=$HASH
+enable_ssh_password=${SAVE_SSH_PASSWORD:-false}
+hostname=${SAVE_HOSTNAME}
+timezone=${SAVE_TIMEZONE}
+locale=${SAVE_LOCALE}
+EOF
+
+    chmod 0600 "$SAVED_CONF"
+    chown root:root "$SAVED_CONF"
+    log "Saved user configuration to $SAVED_CONF"
+
+    # Delete config file — it contains passwords
+    rm -f "$CONFIG_FILE"
+    log "Configuration complete — config file securely deleted."
+else
+    log "Configuration applied from saved settings."
+fi

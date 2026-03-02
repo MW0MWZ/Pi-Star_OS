@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh
+# pistar-config - Process boot configuration file before networking starts
+# Part of Pi-Star OS
+
+description="Pi-Star OS boot configuration processor" # used by OpenRC
+depend() {
+	need localmount
+	after modules
+	before networking wpa_supplicant dhcpcd
+}
+
+start() {
+	ebegin "Applying Pi-Star OS configuration"
+	/usr/local/bin/pistar-config
+	eend $?
+}

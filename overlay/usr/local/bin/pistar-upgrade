@@ -1,0 +1,165 @@
+#!/bin/sh
+# pistar-upgrade - Download and install update to inactive A/B slot
+# Part of Pi-Star OS
+
+set -e
+
+SLOT_CONF="/boot/firmware/slot.conf"
+CMDLINE="/boot/firmware/cmdline.txt"
+OS_CONF="/etc/pistar-os.conf"
+TMP_DIR="/data/tmp"
+
+die() { echo "Error: $*" >&2; exit 1; }
+
+usage() {
+	echo "Usage: pistar-upgrade [--check | --install]"
+	echo "  --check    Check for available updates"
+	echo "  --install  Download and install update to inactive slot"
+	exit 1
+}
+
+[ "$(id -u)" -eq 0 ] || die "must be run as root"
+[ -f "$SLOT_CONF" ] || die "$SLOT_CONF not found"
+[ -f "$OS_CONF" ] || die "$OS_CONF not found"
+
+# shellcheck disable=SC1090
+. "$SLOT_CONF"
+# shellcheck disable=SC1090
+. "$OS_CONF"
+
+# Determine inactive slot
+case "$ACTIVE_SLOT" in
+	A) INACTIVE_SLOT="B"; INACTIVE_PART="3" ;;
+	B) INACTIVE_SLOT="A"; INACTIVE_PART="2" ;;
+	*) die "invalid ACTIVE_SLOT: $ACTIVE_SLOT" ;;
+esac
+
+INACTIVE_DEV="/dev/mmcblk0p${INACTIVE_PART}"
+
+fetch_manifest() {
+	mkdir -p "$TMP_DIR"
+	if ! wget -q -O "$TMP_DIR/$MANIFEST_FILE" "$UPDATE_URL/$MANIFEST_FILE"; then
+		die "failed to fetch manifest from $UPDATE_URL/$MANIFEST_FILE"
+	fi
+	# shellcheck disable=SC1090
+	. "$TMP_DIR/$MANIFEST_FILE"
+}
+
+check_update() {
+	fetch_manifest
+
+	# Get current slot version
+	case "$ACTIVE_SLOT" in
+		A) CURRENT_VER="$SLOT_A_VERSION" ;;
+		B) CURRENT_VER="$SLOT_B_VERSION" ;;
+	esac
+
+	echo "Pi-Star OS Update Check"
+	echo "Current:    ${CURRENT_VER:-unknown}"
+	echo "Available:  ${VERSION:-unknown} (${BUILD_DATE:-unknown})"
+	echo "Active:     Slot $ACTIVE_SLOT"
+	echo "Target:     Slot $INACTIVE_SLOT (partition $INACTIVE_PART)"
+
+	if [ "$VERSION" = "$CURRENT_VER" ]; then
+		echo "Status:     Up to date"
+		return 1
+	else
+		echo "Status:     Update available"
+		return 0
+	fi
+}
+
+install_update() {
+	fetch_manifest
+
+	ROOTFS_FILE="${ROOTFS_FILENAME:-Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz}"
+	SHA_FILE="${ROOTFS_FILE}.sha256"
+
+	echo "Downloading $ROOTFS_FILE..."
+	mkdir -p "$TMP_DIR"
+
+	if ! wget -O "$TMP_DIR/$ROOTFS_FILE" "$UPDATE_URL/$ROOTFS_FILE"; then
+		die "failed to download rootfs tarball"
+	fi
+
+	if ! wget -q -O "$TMP_DIR/$SHA_FILE" "$UPDATE_URL/$SHA_FILE"; then
+		die "failed to download checksum file"
+	fi
+
+	# Verify SHA256
+	echo "Verifying checksum..."
+	cd "$TMP_DIR"
+	if ! sha256sum -c "$SHA_FILE"; then
+		rm -f "$ROOTFS_FILE" "$SHA_FILE"
+		die "checksum verification failed"
+	fi
+	cd /
+
+	# Format inactive partition
+	echo "Formatting $INACTIVE_DEV..."
+	mkfs.ext4 -q -F "$INACTIVE_DEV"
+
+	# Mount and extract
+	MOUNT_DIR="/mnt/inactive"
+	mkdir -p "$MOUNT_DIR"
+	mount "$INACTIVE_DEV" "$MOUNT_DIR"
+
+	echo "Extracting rootfs to slot $INACTIVE_SLOT..."
+	tar -xJf "$TMP_DIR/$ROOTFS_FILE" -C "$MOUNT_DIR"
+
+	# Copy kernel files from extracted rootfs to boot partition
+	echo "Updating boot files for slot $INACTIVE_SLOT..."
+	if [ ! -d "$MOUNT_DIR/boot/firmware" ]; then
+		umount "$MOUNT_DIR"
+		rmdir "$MOUNT_DIR"
+		die "no /boot/firmware in rootfs tarball"
+	fi
+
+	for f in "$MOUNT_DIR"/boot/firmware/kernel*.img \
+	         "$MOUNT_DIR"/boot/firmware/vmlinuz* \
+	         "$MOUNT_DIR"/boot/firmware/*.dtb; do
+		[ -f "$f" ] || continue
+		cp "$f" /boot/firmware/
+	done
+
+	umount "$MOUNT_DIR"
+	rmdir "$MOUNT_DIR"
+
+	# Update cmdline.txt root= parameter
+	if [ -f "$CMDLINE" ]; then
+		sed -i "s|root=/dev/mmcblk0p[0-9]*|root=/dev/mmcblk0p${INACTIVE_PART}|" "$CMDLINE"
+	else
+		die "$CMDLINE not found"
+	fi
+
+	# Update slot.conf
+	case "$INACTIVE_SLOT" in
+		A) NEW_A_VER="$VERSION"; NEW_B_VER="$SLOT_B_VERSION" ;;
+		B) NEW_A_VER="$SLOT_A_VERSION"; NEW_B_VER="$VERSION" ;;
+	esac
+
+	cat > "$SLOT_CONF" <<EOF
+ACTIVE_SLOT=$INACTIVE_SLOT
+PREVIOUS_SLOT=$ACTIVE_SLOT
+PENDING=true
+BOOT_TRIES=0
+SLOT_A_VERSION="$NEW_A_VER"
+SLOT_B_VERSION="$NEW_B_VER"
+EOF
+
+	sync
+
+	# Clean up downloaded files
+	rm -f "$TMP_DIR/$ROOTFS_FILE" "$TMP_DIR/$SHA_FILE" "$TMP_DIR/$MANIFEST_FILE"
+
+	echo ""
+	echo "Update installed to slot $INACTIVE_SLOT (version $VERSION)."
+	echo "Reboot to activate: sudo reboot"
+	echo "If the new version fails, automatic rollback will occur after 3 attempts."
+}
+
+case "$1" in
+	--check)   check_update ;;
+	--install) install_update ;;
+	*)         usage ;;
+esac

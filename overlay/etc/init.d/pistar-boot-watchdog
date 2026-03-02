@@ -1,0 +1,58 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh
+# pistar-boot-watchdog - Increment boot counter and auto-rollback on repeated failures
+# Part of Pi-Star OS
+
+description="Pi-Star OS boot watchdog (A/B slot failure detection)" # used by OpenRC
+# Run early in boot after filesystems are mounted
+depend() {
+	need localmount
+	before pistar-health-check
+}
+
+SLOT_CONF="/boot/firmware/slot.conf"
+MAX_TRIES=3
+
+start() {
+	[ -f "$SLOT_CONF" ] || return 0
+
+	# shellcheck disable=SC1090
+	. "$SLOT_CONF"
+
+	# Only act when a new slot is pending validation
+	[ "$PENDING" = "true" ] || return 0
+
+	BOOT_TRIES=$((BOOT_TRIES + 1))
+
+	ebegin "Boot watchdog: try $BOOT_TRIES of $MAX_TRIES for slot $ACTIVE_SLOT"
+
+	if [ "$BOOT_TRIES" -gt "$MAX_TRIES" ]; then
+		ewarn "Max boot tries exceeded - rolling back to slot $PREVIOUS_SLOT"
+		# Write updated tries before rollback
+		cat > "$SLOT_CONF" <<EOF
+ACTIVE_SLOT=$ACTIVE_SLOT
+PREVIOUS_SLOT=$PREVIOUS_SLOT
+PENDING=$PENDING
+BOOT_TRIES=$BOOT_TRIES
+SLOT_A_VERSION="$SLOT_A_VERSION"
+SLOT_B_VERSION="$SLOT_B_VERSION"
+EOF
+		sync
+		/usr/local/bin/pistar-rollback --force
+		# rollback --force calls reboot; this line should not be reached
+		return 1
+	fi
+
+	# Write updated boot counter
+	cat > "$SLOT_CONF" <<EOF
+ACTIVE_SLOT=$ACTIVE_SLOT
+PREVIOUS_SLOT=$PREVIOUS_SLOT
+PENDING=$PENDING
+BOOT_TRIES=$BOOT_TRIES
+SLOT_A_VERSION="$SLOT_A_VERSION"
+SLOT_B_VERSION="$SLOT_B_VERSION"
+EOF
+	sync
+
+	eend 0
+}

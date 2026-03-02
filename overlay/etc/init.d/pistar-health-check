@@ -1,0 +1,54 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh
+# pistar-health-check - Validate new slot and clear PENDING state
+# Part of Pi-Star OS
+
+description="Pi-Star OS health check (validates A/B slot after upgrade)" # used by OpenRC
+# Run late in boot after networking is up
+depend() {
+	need net
+	after pistar-boot-watchdog
+}
+
+SLOT_CONF="/boot/firmware/slot.conf"
+HEALTH_WAIT=30
+
+start() {
+	[ -f "$SLOT_CONF" ] || return 0
+
+	# shellcheck disable=SC1090
+	. "$SLOT_CONF"
+
+	# Only act when a new slot is pending validation
+	[ "$PENDING" = "true" ] || return 0
+
+	ebegin "Health check: waiting ${HEALTH_WAIT}s for network"
+	sleep "$HEALTH_WAIT"
+
+	# Check if any network interface has an IP address
+	HEALTHY=false
+	for iface in eth0 wlan0; do
+		if ip addr show "$iface" 2>/dev/null | grep -q 'inet '; then
+			HEALTHY=true
+			break
+		fi
+	done
+
+	if [ "$HEALTHY" = "true" ]; then
+		einfo "Health check passed - marking slot $ACTIVE_SLOT as good"
+		cat > "$SLOT_CONF" <<EOF
+ACTIVE_SLOT=$ACTIVE_SLOT
+PREVIOUS_SLOT=$PREVIOUS_SLOT
+PENDING=false
+BOOT_TRIES=0
+SLOT_A_VERSION="$SLOT_A_VERSION"
+SLOT_B_VERSION="$SLOT_B_VERSION"
+EOF
+		sync
+		eend 0
+	else
+		ewarn "Health check failed - no network detected"
+		ewarn "Slot $ACTIVE_SLOT remains PENDING (watchdog will handle rollback)"
+		eend 1
+	fi
+}
