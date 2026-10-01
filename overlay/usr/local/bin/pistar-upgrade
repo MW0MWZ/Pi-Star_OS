@@ -7,15 +7,18 @@ set -e
 SLOT_CONF="/boot/firmware/slot.conf"
 CMDLINE="/boot/firmware/cmdline.txt"
 OS_CONF="/etc/pistar-os.conf"
+OS_RELEASE="/etc/pistar-os-release"
 TMP_DIR="/data/tmp"
 
-die() { echo "Error: $*" >&2; exit 1; }
+# Exit codes: 0 = success (--check: update available), 1 = --check: up to
+# date, 2 = error. Errors must not use 1 or callers will read "up to date".
+die() { echo "Error: $*" >&2; exit 2; }
 
 usage() {
 	echo "Usage: pistar-upgrade [--check | --install]"
 	echo "  --check    Check for available updates"
 	echo "  --install  Download and install update to inactive slot"
-	exit 1
+	exit 2
 }
 
 [ "$(id -u)" -eq 0 ] || die "must be run as root"
@@ -36,43 +39,91 @@ esac
 
 INACTIVE_DEV="/dev/mmcblk0p${INACTIVE_PART}"
 
+# manifest_value KEY — print KEY's value from the downloaded manifest.
+# The manifest comes from the network, so it is parsed rather than sourced.
+manifest_value() {
+	sed -n "s/^$1=//p" "$TMP_DIR/$MANIFEST_FILE" | head -1 | tr -d '"\r'
+}
+
 fetch_manifest() {
 	mkdir -p "$TMP_DIR"
 	if ! wget -q -O "$TMP_DIR/$MANIFEST_FILE" "$UPDATE_URL/$MANIFEST_FILE"; then
 		die "failed to fetch manifest from $UPDATE_URL/$MANIFEST_FILE"
 	fi
-	# shellcheck disable=SC1090
-	. "$TMP_DIR/$MANIFEST_FILE"
+
+	VERSION=$(manifest_value VERSION)
+	BUILD_DATE=$(manifest_value BUILD_DATE)
+	ROOTFS_FILENAME=$(manifest_value ROOTFS_FILENAME)
+
+	case "$VERSION" in
+		""|.*|*.|*..*|*[!0-9.]*) die "manifest has invalid VERSION: '$VERSION'" ;;
+	esac
+	case "$ROOTFS_FILENAME" in
+		""|*[!A-Za-z0-9._-]*) die "manifest has invalid ROOTFS_FILENAME" ;;
+	esac
+}
+
+# current_version — version of the running rootfs. /etc/pistar-os-release
+# belongs to the slot itself, so it is authoritative; slot.conf is the
+# fallback. Any " (build date)" suffix from older images is dropped.
+current_version() {
+	ver=""
+	if [ -f "$OS_RELEASE" ]; then
+		ver=$(sed -n 's/^Version:[[:space:]]*//p' "$OS_RELEASE" | head -1)
+	fi
+	if [ -z "$ver" ]; then
+		case "$ACTIVE_SLOT" in
+			A) ver="$SLOT_A_VERSION" ;;
+			B) ver="$SLOT_B_VERSION" ;;
+		esac
+	fi
+	echo "${ver%% *}"
+}
+
+# version_gt A B — true if version A is newer than version B. Versions are
+# dot-separated numbers (YYYY.MM.DD.RR) compared field by field, so legacy
+# versions like 5.0.0 sort below any date-based version. Non-numeric
+# fields count as 0.
+version_gt() {
+	a="$1"
+	b="$2"
+	while [ -n "$a" ] || [ -n "$b" ]; do
+		fa="${a%%.*}"
+		fb="${b%%.*}"
+		case "$a" in *.*) a="${a#*.}" ;; *) a="" ;; esac
+		case "$b" in *.*) b="${b#*.}" ;; *) b="" ;; esac
+		case "$fa" in ""|*[!0-9]*) fa=0 ;; esac
+		case "$fb" in ""|*[!0-9]*) fb=0 ;; esac
+		[ "$fa" -gt "$fb" ] && return 0
+		[ "$fa" -lt "$fb" ] && return 1
+	done
+	return 1
 }
 
 check_update() {
 	fetch_manifest
 
-	# Get current slot version
-	case "$ACTIVE_SLOT" in
-		A) CURRENT_VER="$SLOT_A_VERSION" ;;
-		B) CURRENT_VER="$SLOT_B_VERSION" ;;
-	esac
+	CURRENT_VER=$(current_version)
 
 	echo "Pi-Star OS Update Check"
 	echo "Current:    ${CURRENT_VER:-unknown}"
-	echo "Available:  ${VERSION:-unknown} (${BUILD_DATE:-unknown})"
+	echo "Available:  ${VERSION} (${BUILD_DATE:-unknown})"
 	echo "Active:     Slot $ACTIVE_SLOT"
 	echo "Target:     Slot $INACTIVE_SLOT (partition $INACTIVE_PART)"
 
-	if [ "$VERSION" = "$CURRENT_VER" ]; then
-		echo "Status:     Up to date"
-		return 1
-	else
+	if [ -z "$CURRENT_VER" ] || version_gt "$VERSION" "$CURRENT_VER"; then
 		echo "Status:     Update available"
 		return 0
+	else
+		echo "Status:     Up to date"
+		return 1
 	fi
 }
 
 install_update() {
 	fetch_manifest
 
-	ROOTFS_FILE="${ROOTFS_FILENAME:-Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz}"
+	ROOTFS_FILE="$ROOTFS_FILENAME"
 	SHA_FILE="${ROOTFS_FILE}.sha256"
 
 	echo "Downloading $ROOTFS_FILE..."

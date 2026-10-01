@@ -12,6 +12,10 @@ on:
         required: false
         default: false
 
+concurrency:
+  group: build-image
+  cancel-in-progress: false
+
 env:
   ALPINE_VERSION: "3.23"
   ALPINE_ARCH: "armhf"
@@ -36,8 +40,15 @@ jobs:
     - name: Set build date and version
       id: set-date
       run: |
-        BUILD_DATE=$(date +'%Y-%m-%d')
-        VERSION="5.0.0"
+        # Version format: YYYY.MM.DD.RR — RR is the release number for that
+        # day, starting at 1. The tag is the bare version (no "v" prefix).
+        BUILD_DATE=$(date -u +'%Y-%m-%d')
+        DATE_PREFIX=$(date -u +'%Y.%m.%d')
+        LAST_RR=$(git ls-remote --tags origin "refs/tags/${DATE_PREFIX}.*" | \
+                  sed -n "s|.*refs/tags/${DATE_PREFIX}\.\([0-9][0-9]*\)$|\1|p" | \
+                  sort -n | tail -1)
+        VERSION="${DATE_PREFIX}.$(( ${LAST_RR:-0} + 1 ))"
+        echo "Version: ${VERSION}"
         echo "date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
         echo "BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
@@ -467,7 +478,7 @@ jobs:
         # Write slot.conf
         sudo cp overlay/boot/firmware/slot.conf /mnt/boot/slot.conf
         # Set initial version
-        sudo sed -i "s/^SLOT_A_VERSION=.*/SLOT_A_VERSION=\"${VERSION} (${BUILD_DATE})\"/" /mnt/boot/slot.conf
+        sudo sed -i "s/^SLOT_A_VERSION=.*/SLOT_A_VERSION=\"${VERSION}\"/" /mnt/boot/slot.conf
 
         echo "Boot partition configured with A/B slot support"
 
@@ -578,16 +589,16 @@ jobs:
 
         # Rootfs already has kernel files in /boot/firmware/ from apk install
         cd /mnt/root
-        sudo tar -cJf "/tmp/Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz" .
-        sudo chown "$(id -u):$(id -g)" "/tmp/Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz"
+        sudo tar -cJf "/tmp/Pi-Star_OS-${VERSION}.rootfs.tar.xz" .
+        sudo chown "$(id -u):$(id -g)" "/tmp/Pi-Star_OS-${VERSION}.rootfs.tar.xz"
         cd /
 
         # Generate checksum
         cd /tmp
-        sha256sum "Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz" > "Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz.sha256"
+        sha256sum "Pi-Star_OS-${VERSION}.rootfs.tar.xz" > "Pi-Star_OS-${VERSION}.rootfs.tar.xz.sha256"
 
         echo "Rootfs tarball created:"
-        ls -lh "/tmp/Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz"
+        ls -lh "/tmp/Pi-Star_OS-${VERSION}.rootfs.tar.xz"
 
     - name: Create manifest
       run: |
@@ -595,7 +606,7 @@ jobs:
         VERSION=${VERSION}
         BUILD_DATE=${BUILD_DATE}
         ALPINE_VERSION=${ALPINE_VERSION}
-        ROOTFS_FILENAME=Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz
+        ROOTFS_FILENAME=Pi-Star_OS-${VERSION}.rootfs.tar.xz
         EOF
 
     - name: Cleanup and unmount
@@ -611,20 +622,20 @@ jobs:
       run: |
         echo "Compressing image..."
         xz -9 -T0 pistar-os.img
-        mv pistar-os.img.xz "Pi-Star_OS-${BUILD_DATE}.img.xz"
+        mv pistar-os.img.xz "Pi-Star_OS-${VERSION}.img.xz"
 
-        sha256sum "Pi-Star_OS-${BUILD_DATE}.img.xz" > "Pi-Star_OS-${BUILD_DATE}.img.xz.sha256"
+        sha256sum "Pi-Star_OS-${VERSION}.img.xz" > "Pi-Star_OS-${VERSION}.img.xz.sha256"
 
         echo "Image compressed:"
-        ls -lh "Pi-Star_OS-${BUILD_DATE}.img.xz"
+        ls -lh "Pi-Star_OS-${VERSION}.img.xz"
 
     - name: Collect artifacts
       run: |
         mkdir -p artifacts
-        mv "Pi-Star_OS-${BUILD_DATE}.img.xz" artifacts/
-        mv "Pi-Star_OS-${BUILD_DATE}.img.xz.sha256" artifacts/
-        mv "/tmp/Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz" artifacts/
-        mv "/tmp/Pi-Star_OS-${BUILD_DATE}.rootfs.tar.xz.sha256" artifacts/
+        mv "Pi-Star_OS-${VERSION}.img.xz" artifacts/
+        mv "Pi-Star_OS-${VERSION}.img.xz.sha256" artifacts/
+        mv "/tmp/Pi-Star_OS-${VERSION}.rootfs.tar.xz" artifacts/
+        mv "/tmp/Pi-Star_OS-${VERSION}.rootfs.tar.xz.sha256" artifacts/
         mv /tmp/manifest.txt artifacts/
 
         echo "Artifacts:"
@@ -633,7 +644,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v7
       with:
-        name: Pi-Star_OS-${{ env.BUILD_DATE }}
+        name: Pi-Star_OS-${{ env.VERSION }}
         path: artifacts/
         retention-days: 90
 
@@ -641,8 +652,8 @@ jobs:
       if: github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v${{ env.BUILD_DATE }}
-        name: Pi-Star OS ${{ env.BUILD_DATE }}
+        tag_name: ${{ env.VERSION }}
+        name: Pi-Star OS ${{ env.VERSION }}
         draft: false
         prerelease: false
         files: |
@@ -652,18 +663,20 @@ jobs:
           artifacts/Pi-Star_OS-*.rootfs.tar.xz.sha256
           artifacts/manifest.txt
         body: |
-          # Pi-Star OS - ${{ env.BUILD_DATE }}
+          # Pi-Star OS ${{ env.VERSION }}
+
+          Built ${{ env.BUILD_DATE }}.
 
           Raspberry Pi OS kernel/firmware with Alpine Linux ${{ env.ALPINE_VERSION }} userland.
           A/B root partition scheme for safe, router-style upgrades.
 
           ## Downloads
-          - **Full image** (first install): `Pi-Star_OS-${{ env.BUILD_DATE }}.img.xz`
-          - **Rootfs tarball** (upgrades): `Pi-Star_OS-${{ env.BUILD_DATE }}.rootfs.tar.xz`
+          - **Full image** (first install): `Pi-Star_OS-${{ env.VERSION }}.img.xz`
+          - **Rootfs tarball** (upgrades): `Pi-Star_OS-${{ env.VERSION }}.rootfs.tar.xz`
 
           ## Verification
           ```
-          sha256sum -c Pi-Star_OS-${{ env.BUILD_DATE }}.img.xz.sha256
+          sha256sum -c Pi-Star_OS-${{ env.VERSION }}.img.xz.sha256
           ```
 
           ## Default Credentials

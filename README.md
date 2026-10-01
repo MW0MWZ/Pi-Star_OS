@@ -37,10 +37,10 @@
 
 ```bash
 # Extract the image
-xz -d Pi-Star_OS-YYYY-MM-DD.img.xz
+xz -d Pi-Star_OS-YYYY.MM.DD.RR.img.xz
 
 # Write to SD card (replace /dev/sdX with your SD card device)
-sudo dd if=Pi-Star_OS-YYYY-MM-DD.img of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=Pi-Star_OS-YYYY.MM.DD.RR.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ### 3. Configure Before First Boot (Optional)
@@ -173,7 +173,7 @@ Data   (ext4)        - persistent user data, bind-mounted into rootfs
 pistar-upgrade --install
   1. Downloads new rootfs to inactive slot
   2. Marks new slot as PENDING
-  3. Reboots
+  3. User reboots to activate it
 
 Boot watchdog (pistar-boot-watchdog)
   4. Increments boot counter each boot while PENDING
@@ -200,6 +200,12 @@ pistar-slot-info
 # Manual rollback to previous slot
 sudo pistar-rollback
 ```
+
+`pistar-upgrade --check` exits `0` if an update is available, `1` if up to date, and `2` on error.
+
+### Versioning
+
+Releases are tagged `YYYY.MM.DD.RR`, where `RR` is the release number for that day starting at 1 (e.g. `2026.10.01.1`). The same string is used for the image and rootfs filenames, `manifest.txt`, `/etc/pistar-os-release` and `slot.conf`. An update is offered only when the published version is newer than the running one, compared field by field. Older images reporting `5.0.0` are treated as older than any date-based release.
 
 ## Partition Layout
 
