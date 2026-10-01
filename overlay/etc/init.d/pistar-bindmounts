@@ -28,9 +28,30 @@ start() {
 		fi
 
 		mount --bind "$src" "$dest"
+
+		prune_stale_templates "$name"
 	done
 
 	eend 0
+}
+
+# Packages now ship configuration templates in /usr/share/<pkg>/ and
+# nothing in /etc/<pkg>/. Templates that older packages left in
+# /data/etc/<pkg>/ would otherwise persist across slot upgrades, so remove
+# each one once the active slot provides its replacement. Pre-rename
+# MMDVMHost/DisplayDriver templates are replaced by MMDVM-Host/MMDVM-Display.
+prune_stale_templates() {
+	pkg="$1"
+	for tmpl in /etc/"$pkg"/*.ini.example; do
+		[ -f "$tmpl" ] || continue
+		base="${tmpl##*/}"
+		case "$base" in
+			MMDVMHost.ini.example) replacement="MMDVM-Host.ini.example" ;;
+			DisplayDriver.ini.example) replacement="MMDVM-Display.ini.example" ;;
+			*) replacement="$base" ;;
+		esac
+		[ -f "/usr/share/$pkg/$replacement" ] && rm -f "$tmpl"
+	done
 }
 
 stop() {

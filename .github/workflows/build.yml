@@ -541,6 +541,7 @@ jobs:
         sudo mkdir -p /mnt/data/etc/dropbear
         sudo mkdir -p /mnt/data/etc/wpa_supplicant
         sudo mkdir -p /mnt/data/etc/mmdvmhost
+        sudo mkdir -p /mnt/data/etc/mmdvminfo
         sudo mkdir -p /mnt/data/etc/dmrclients
         sudo mkdir -p /mnt/data/etc/dstarclients
         sudo mkdir -p /mnt/data/etc/ysfclients
