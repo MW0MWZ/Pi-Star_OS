@@ -1,17 +1,74 @@
 #!/sbin/openrc-run
 # shellcheck shell=sh
-# pistar-health-check - Validate new slot and clear PENDING state
+# pistar-health-check - Validate a newly installed slot and clear PENDING
 # Part of Pi-Star OS
+#
+# A slot is healthy when Pi-Star MCP is running and serving requests, and
+# the network has come up on some interface. If no network is configured
+# at all (no Ethernet carrier, no WiFi networks), the network check is
+# skipped so an offline hotspot doesn't roll back a working upgrade.
+#
+# Checks are polled until they pass or HEALTH_TIMEOUT expires. On timeout
+# the slot stays PENDING and pistar-boot-watchdog rolls back after too
+# many failed boots.
 
 description="Pi-Star OS health check (validates A/B slot after upgrade)" # used by OpenRC
-# Run late in boot after networking is up
+
 depend() {
-	need net
-	after pistar-boot-watchdog
+	use net
+	after net pistar-boot-watchdog pistar-mcp
 }
 
 SLOT_CONF="/boot/firmware/slot.conf"
-HEALTH_WAIT=30
+MCP_CONF="/etc/pistar-mcp/pistar-mcp.ini"
+WPA_CONF="/etc/wpa_supplicant/wpa_supplicant.conf"
+HEALTH_TIMEOUT=120
+HEALTH_INTERVAL=5
+
+# mcp_https_port - port from [dashboard] listen_https (":443" form), or 443
+mcp_https_port() {
+	port=$(sed -n 's/^[[:space:]]*listen_https[[:space:]]*=[[:space:]]*.*:\([0-9][0-9]*\)[[:space:]]*$/\1/p' \
+		"$MCP_CONF" 2>/dev/null | head -1)
+	echo "${port:-443}"
+}
+
+# mcp_healthy - the service is running and answers a status request
+mcp_healthy() {
+	rc-service pistar-mcp status >/dev/null 2>&1 || return 1
+	printf 'GET /api/system/metrics HTTP/1.0\r\nHost: localhost\r\n\r\n' | \
+		timeout 5 openssl s_client -connect "127.0.0.1:$(mcp_https_port)" -quiet -ign_eof 2>/dev/null | \
+		head -1 | grep -q ' 200 '
+}
+
+# network_configured - an Ethernet cable is connected or WiFi networks
+# are configured, so the network is expected to come up
+network_configured() {
+	for carrier in /sys/class/net/*/carrier; do
+		iface="${carrier%/carrier}"
+		iface="${iface##*/}"
+		[ "$iface" = "lo" ] && continue
+		[ -d "/sys/class/net/$iface/wireless" ] && continue
+		[ "$(cat "$carrier" 2>/dev/null)" = "1" ] && return 0
+	done
+	grep -q '^[[:space:]]*network[[:space:]]*=' "$WPA_CONF" 2>/dev/null
+}
+
+# network_up - some interface has a usable (non link-local) IPv4 address
+network_up() {
+	ip -4 -o addr show scope global 2>/dev/null | grep ' inet ' | grep -qv ' inet 169\.254\.'
+}
+
+write_slot_conf() {
+	cat > "$SLOT_CONF" <<EOF
+ACTIVE_SLOT=$ACTIVE_SLOT
+PREVIOUS_SLOT=$PREVIOUS_SLOT
+PENDING=false
+BOOT_TRIES=0
+SLOT_A_VERSION="$SLOT_A_VERSION"
+SLOT_B_VERSION="$SLOT_B_VERSION"
+EOF
+	sync
+}
 
 start() {
 	[ -f "$SLOT_CONF" ] || return 0
@@ -22,33 +79,35 @@ start() {
 	# Only act when a new slot is pending validation
 	[ "$PENDING" = "true" ] || return 0
 
-	ebegin "Health check: waiting ${HEALTH_WAIT}s for network"
-	sleep "$HEALTH_WAIT"
+	ebegin "Health check: validating slot $ACTIVE_SLOT (up to ${HEALTH_TIMEOUT}s)"
 
-	# Check if any network interface has an IP address
-	HEALTHY=false
-	for iface in eth0 wlan0; do
-		if ip addr show "$iface" 2>/dev/null | grep -q 'inet '; then
-			HEALTHY=true
+	need_network=true
+	network_configured || need_network=false
+	$need_network || einfo "No network configured - skipping the network check"
+
+	elapsed=0
+	while :; do
+		failed=""
+		mcp_healthy || failed="$failed pistar-mcp"
+		if $need_network; then
+			network_up || failed="$failed network"
+		fi
+
+		if [ -z "$failed" ]; then
+			einfo "Health check passed after ${elapsed}s - marking slot $ACTIVE_SLOT as good"
+			write_slot_conf
+			eend 0
+			return 0
+		fi
+
+		if [ "$elapsed" -ge "$HEALTH_TIMEOUT" ]; then
 			break
 		fi
+		sleep "$HEALTH_INTERVAL"
+		elapsed=$((elapsed + HEALTH_INTERVAL))
 	done
 
-	if [ "$HEALTHY" = "true" ]; then
-		einfo "Health check passed - marking slot $ACTIVE_SLOT as good"
-		cat > "$SLOT_CONF" <<EOF
-ACTIVE_SLOT=$ACTIVE_SLOT
-PREVIOUS_SLOT=$PREVIOUS_SLOT
-PENDING=false
-BOOT_TRIES=0
-SLOT_A_VERSION="$SLOT_A_VERSION"
-SLOT_B_VERSION="$SLOT_B_VERSION"
-EOF
-		sync
-		eend 0
-	else
-		ewarn "Health check failed - no network detected"
-		ewarn "Slot $ACTIVE_SLOT remains PENDING (watchdog will handle rollback)"
-		eend 1
-	fi
+	ewarn "Health check failed after ${HEALTH_TIMEOUT}s:${failed}"
+	ewarn "Slot $ACTIVE_SLOT remains PENDING (watchdog will handle rollback)"
+	eend 1
 }

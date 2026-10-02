@@ -181,7 +181,8 @@ Boot watchdog (pistar-boot-watchdog)
   5. If counter exceeds 3, rolls back automatically
 
 Health check (pistar-health-check)
-  6. Waits for network connectivity
+  6. Polls for up to 2 minutes: Pi-Star MCP running and answering, and
+     an address on any interface (skipped if no network is configured)
   7. If healthy, clears PENDING — upgrade confirmed
   8. If not, watchdog handles rollback on next reboot
 ```
@@ -258,7 +259,7 @@ boot runlevel:
   dhcpcd                gets IP address
 
 default runlevel:
-  pistar-health-check   validates network, clears PENDING
+  pistar-health-check   checks MCP and network, clears PENDING
   dropbear              SSH server
   crond                 runs scheduled updates set up by Pi-Star MCP
 ```
