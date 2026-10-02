@@ -4,13 +4,8 @@ on:
   schedule:
     # Quarterly: 1st of Jan/Apr/Jul/Oct at 2 AM UTC
     - cron: '0 2 1 */3 *'
+  # A manual run always builds
   workflow_dispatch:
-    inputs:
-      force_build:
-        type: boolean
-        description: 'Force build even if no upstream changes'
-        required: false
-        default: false
 
 concurrency:
   group: build-image
@@ -25,7 +20,52 @@ env:
   SLOT_B_END: "3329MiB"
 
 jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+    - name: Check for changes since the last image
+      id: check
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Scheduled builds only run when RasPINE has a newer release or this
+        # repository has changed since the last image. Each image's
+        # manifest.txt records the RasPINE release and commit it was built
+        # from; when either is unknown, build.
+        if [ "${{ github.event_name }}" != "schedule" ]; then
+          echo "Manual run - building"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        LATEST_RASPINE=$(gh api repos/MW0MWZ/RasPINE/releases/latest -q .tag_name 2>/dev/null || true)
+        MANIFEST=$(curl -sfL "https://github.com/${{ github.repository }}/releases/latest/download/manifest.txt" || true)
+        BUILT_RASPINE=$(echo "$MANIFEST" | sed -n 's/^RASPINE_RELEASE=//p')
+        BUILT_COMMIT=$(echo "$MANIFEST" | sed -n 's/^BUILD_COMMIT=//p')
+
+        echo "RasPINE latest:   ${LATEST_RASPINE:-unknown}"
+        echo "Last image built: RasPINE ${BUILT_RASPINE:-unknown}, commit ${BUILT_COMMIT:-unknown}"
+        echo "Current commit:   ${{ github.sha }}"
+
+        if [ -z "$LATEST_RASPINE" ] || [ -z "$BUILT_RASPINE" ] || [ -z "$BUILT_COMMIT" ]; then
+          echo "Cannot tell what the last image was built from - building"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+        elif [ "$LATEST_RASPINE" != "$BUILT_RASPINE" ]; then
+          echo "New RasPINE release - building"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+        elif [ "$BUILT_COMMIT" != "${{ github.sha }}" ]; then
+          echo "Pi-Star OS has changed - building"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "No changes since the last image - skipping"
+          echo "should_build=false" >> "$GITHUB_OUTPUT"
+        fi
+
   build:
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -53,31 +93,6 @@ jobs:
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
         echo "BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
         echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-    - name: Check for upstream changes
-      if: github.event_name == 'schedule'
-      id: check-upstream
-      run: |
-        # Check if RasPINE has new releases since our last build
-        LATEST_RASPINE=$(curl -s https://api.github.com/repos/MW0MWZ/RasPINE/releases/latest | jq -r '.tag_name // empty')
-        LAST_BUILD=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name // empty')
-
-        if [ -z "$LATEST_RASPINE" ]; then
-          echo "Could not check upstream - building anyway"
-          echo "should_build=true" >> "$GITHUB_OUTPUT"
-        elif [ "$LATEST_RASPINE" = "$LAST_BUILD" ] && [ "${{ inputs.force_build }}" != "true" ]; then
-          echo "No upstream changes detected"
-          echo "should_build=false" >> "$GITHUB_OUTPUT"
-        else
-          echo "Upstream changes detected or force build requested"
-          echo "should_build=true" >> "$GITHUB_OUTPUT"
-        fi
-
-    - name: Skip build if no changes
-      if: steps.check-upstream.outputs.should_build == 'false'
-      run: |
-        echo "No upstream changes - skipping build"
-        exit 0
 
     - name: Install build dependencies
       run: |
@@ -611,12 +626,19 @@ jobs:
         ls -lh "/tmp/Pi-Star_OS-${VERSION}.rootfs.tar.xz"
 
     - name: Create manifest
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
+        # RASPINE_RELEASE and BUILD_COMMIT let the scheduled check tell
+        # whether anything has changed since this image was built.
+        RASPINE_RELEASE=$(gh api repos/MW0MWZ/RasPINE/releases/latest -q .tag_name 2>/dev/null || true)
         cat > /tmp/manifest.txt << EOF
         VERSION=${VERSION}
         BUILD_DATE=${BUILD_DATE}
         ALPINE_VERSION=${ALPINE_VERSION}
         ROOTFS_FILENAME=Pi-Star_OS-${VERSION}.rootfs.tar.xz
+        RASPINE_RELEASE=${RASPINE_RELEASE}
+        BUILD_COMMIT=${{ github.sha }}
         EOF
 
     - name: Cleanup and unmount
