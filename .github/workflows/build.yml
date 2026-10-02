@@ -503,11 +503,12 @@ jobs:
         #     on the boot partition, put card back, reboot
 
         # === WIFI CONFIGURATION ===
-        # Primary network (highest priority)
+        # Networks are numbered 1-10; when more than one is in range, the
+        # highest number wins. wifi_ssid (no number) is network 1, the lowest.
         #wifi_ssid=YourWorkNetwork
         #wifi_password=YourWorkPassword
 
-        # Secondary networks (numbered for priority - higher numbers = higher priority)
+        # Preferred over network 1
         #wifi_ssid_2=YourHomeNetwork
         #wifi_password_2=YourHomePassword
 
@@ -537,7 +538,7 @@ jobs:
         # - pi-star user has passwordless sudo access
         # - SSH password authentication is disabled unless explicitly enabled
         # - THIS FILE WILL BE DELETED after processing for security
-        # - WiFi networks are tried in order of priority (higher numbers first)
+        # - WiFi networks are preferred by number (wifi_ssid_10 highest, wifi_ssid lowest)
         EOF
 
     - name: Create /data skeleton

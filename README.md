@@ -90,11 +90,12 @@ This works for **first boot** and **recovery**. If your WiFi config breaks, pop 
 Configure multiple WiFi networks with priority ordering:
 
 ```ini
-# Primary network
+# Networks are numbered 1-10; when more than one is in range, the highest
+# number wins. wifi_ssid (no number) is network 1, the lowest priority.
 wifi_ssid=HomeNetwork
 wifi_password=HomePassword
 
-# Additional networks with priority (higher numbers = higher priority)
+# Preferred over network 1
 wifi_ssid_2=WorkNetwork
 wifi_password_2=WorkPassword
 
