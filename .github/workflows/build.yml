@@ -448,6 +448,8 @@ jobs:
         sudo cp overlay/usr/local/bin/pistar-slot-info /mnt/root/usr/local/bin/
         sudo cp overlay/usr/local/bin/pistar-config /mnt/root/usr/local/bin/
         sudo chmod +x /mnt/root/usr/local/bin/pistar-*
+        sudo mkdir -p /mnt/root/usr/local/lib/pistar-os
+        sudo cp overlay/usr/local/lib/pistar-os/bootslot.sh /mnt/root/usr/local/lib/pistar-os/
 
         # Copy init scripts
         sudo cp overlay/etc/init.d/pistar-config /mnt/root/etc/init.d/
@@ -455,12 +457,14 @@ jobs:
         sudo cp overlay/etc/init.d/pistar-health-check /mnt/root/etc/init.d/
         sudo cp overlay/etc/init.d/pistar-data-resize /mnt/root/etc/init.d/
         sudo cp overlay/etc/init.d/pistar-bindmounts /mnt/root/etc/init.d/
+        sudo cp overlay/etc/init.d/pistar-boot-layout /mnt/root/etc/init.d/
         sudo chmod +x /mnt/root/etc/init.d/pistar-*
 
         # Enable Pi-Star OS services
         sudo ln -s /etc/init.d/pistar-bindmounts /mnt/root/etc/runlevels/boot/pistar-bindmounts
         sudo ln -s /etc/init.d/pistar-config /mnt/root/etc/runlevels/boot/pistar-config
         sudo ln -s /etc/init.d/pistar-boot-watchdog /mnt/root/etc/runlevels/boot/pistar-boot-watchdog
+        sudo ln -s /etc/init.d/pistar-boot-layout /mnt/root/etc/runlevels/boot/pistar-boot-layout
         sudo ln -s /etc/init.d/pistar-health-check /mnt/root/etc/runlevels/default/pistar-health-check
         sudo ln -s /etc/init.d/pistar-data-resize /mnt/root/etc/runlevels/boot/pistar-data-resize
 
@@ -488,14 +492,22 @@ jobs:
           exit 1
         fi
 
-        # Ensure cmdline.txt points to slot A (P2)
-        sudo sed -i 's|root=/dev/mmcblk0p[0-9]*|root=/dev/mmcblk0p2|' /mnt/boot/cmdline.txt
-        # Ensure fsck.repair=yes is present
-        if ! grep -q 'fsck.repair=yes' /mnt/boot/cmdline.txt; then
-          sudo sed -i 's/$/ fsck.repair=yes/' /mnt/boot/cmdline.txt
-        fi
+        # Per-slot boot directories: slot A's kernels, device trees,
+        # overlays and cmdline.txt go in /boot/firmware/slotA/, selected by
+        # os_prefix in config.txt. GPU firmware stays shared at the root.
+        # slotB/ is created by the first upgrade.
+        sudo env PISTAR_FW_DIR=/mnt/boot sh -c '
+          set -e
+          . overlay/usr/local/lib/pistar-os/bootslot.sh
+          install_slot_boot /mnt/boot A /mnt/boot/cmdline.txt
+          set_active_slot A
+        '
+        # The root copies are now in slotA/
+        sudo rm -rf /mnt/boot/kernel*.img /mnt/boot/*.dtb /mnt/boot/overlays
 
-        echo "cmdline.txt: $(cat /mnt/boot/cmdline.txt)"
+        echo "slotA/cmdline.txt: $(cat /mnt/boot/slotA/cmdline.txt)"
+        echo "config.txt slot block:"; sed -n '/>>> Pi-Star OS boot slot/,/<<< Pi-Star OS boot slot/p' /mnt/boot/config.txt
+        ls /mnt/boot/slotA
 
         # Write slot.conf
         sudo cp overlay/boot/firmware/slot.conf /mnt/boot/slot.conf

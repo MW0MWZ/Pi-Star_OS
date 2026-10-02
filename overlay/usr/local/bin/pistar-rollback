@@ -14,51 +14,51 @@ die() { echo "Error: $*" >&2; exit 1; }
 
 # shellcheck disable=SC1090
 . "$SLOT_CONF"
+# shellcheck source=../lib/pistar-os/bootslot.sh
+. /usr/local/lib/pistar-os/bootslot.sh
 
 FORCE=false
 [ "$1" = "--force" ] && FORCE=true
 
 [ -n "$PREVIOUS_SLOT" ] || die "no previous slot to roll back to"
+PREV_PART=$(slot_part "$PREVIOUS_SLOT") || die "invalid PREVIOUS_SLOT: $PREVIOUS_SLOT"
+PREV_DEV=$(slot_dev "$PREVIOUS_SLOT")
 
-# Map slot letter to partition number
-case "$PREVIOUS_SLOT" in
-	A) PREV_PART="2" ;;
-	B) PREV_PART="3" ;;
-	*) die "invalid PREVIOUS_SLOT: $PREVIOUS_SLOT" ;;
-esac
-
-PREV_DEV="/dev/mmcblk0p${PREV_PART}"
-PREV_MNT="/tmp/rollback-mnt"
+# The slot the firmware boots now; slot.conf on the old shared layout
+BOOT_ACTIVE=$(active_slot)
+[ -n "$BOOT_ACTIVE" ] && ACTIVE_SLOT="$BOOT_ACTIVE"
 
 echo "Rolling back to slot $PREVIOUS_SLOT (partition $PREV_PART)..."
 
-# Mount previous slot's rootfs and copy kernel files
-mkdir -p "$PREV_MNT"
-cleanup() { umount "$PREV_MNT" 2>/dev/null; rmdir "$PREV_MNT" 2>/dev/null; }
-trap cleanup EXIT
-
-mount -o ro "$PREV_DEV" "$PREV_MNT" || die "failed to mount $PREV_DEV"
-
-if [ ! -d "$PREV_MNT/boot/firmware" ]; then
-	die "no /boot/firmware in previous slot rootfs"
-fi
-
-for f in "$PREV_MNT"/boot/firmware/kernel*.img \
-         "$PREV_MNT"/boot/firmware/vmlinuz* \
-         "$PREV_MNT"/boot/firmware/*.dtb; do
-	[ -f "$f" ] || continue
-	cp "$f" /boot/firmware/
-done
-
-umount "$PREV_MNT"
-rmdir "$PREV_MNT"
-trap - EXIT
-
-# Update cmdline.txt root= parameter
-if [ -f "$CMDLINE" ]; then
-	sed -i "s|root=/dev/mmcblk0p[0-9]*|root=/dev/mmcblk0p${PREV_PART}|" "$CMDLINE"
+if [ -n "$BOOT_ACTIVE" ]; then
+	# Per-slot boot directories: the previous slot's kernel, device trees
+	# and overlays are intact, so switching os_prefix is all it takes.
+	[ -d "$BOOTSLOT_FW_DIR/slot$PREVIOUS_SLOT" ] || \
+		die "no boot files for slot $PREVIOUS_SLOT in $BOOTSLOT_FW_DIR/slot$PREVIOUS_SLOT"
+	set_active_slot "$PREVIOUS_SLOT" || die "could not update config.txt"
 else
-	die "$CMDLINE not found"
+	# Shared layout (boot-layout migration hasn't run): copy the previous
+	# slot's kernel files back and point cmdline.txt at it.
+	PREV_MNT="/tmp/rollback-mnt"
+	mkdir -p "$PREV_MNT"
+	cleanup() { umount "$PREV_MNT" 2>/dev/null; rmdir "$PREV_MNT" 2>/dev/null; }
+	trap cleanup EXIT
+
+	mount -o ro "$PREV_DEV" "$PREV_MNT" || die "failed to mount $PREV_DEV"
+	[ -d "$PREV_MNT/boot/firmware" ] || die "no /boot/firmware in previous slot rootfs"
+
+	for f in "$PREV_MNT"/boot/firmware/kernel*.img \
+	         "$PREV_MNT"/boot/firmware/*.dtb; do
+		[ -f "$f" ] || continue
+		cp "$f" /boot/firmware/
+	done
+
+	umount "$PREV_MNT"
+	rmdir "$PREV_MNT"
+	trap - EXIT
+
+	[ -f "$CMDLINE" ] || die "$CMDLINE not found"
+	sed -i "s|root=/dev/mmcblk0p[0-9]*|root=${PREV_DEV}|" "$CMDLINE"
 fi
 
 # Update slot.conf: swap ACTIVE and PREVIOUS

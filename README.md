@@ -173,18 +173,20 @@ Data   (ext4)        - persistent user data, bind-mounted into rootfs
 ```
 pistar-upgrade --install
   1. Downloads new rootfs to inactive slot
-  2. Marks new slot as PENDING
-  3. User reboots to activate it
+  2. Builds the inactive slot's boot directory (slotA/ or slotB/) on the
+     boot partition; the running slot's boot files are never touched
+  3. Points config.txt's os_prefix at the new slot and marks it PENDING
+  4. User reboots to activate it
 
 Boot watchdog (pistar-boot-watchdog)
-  4. Increments boot counter each boot while PENDING
-  5. If counter exceeds 3, rolls back automatically
+  5. Increments boot counter each boot while PENDING
+  6. If counter exceeds 3, rolls back automatically
 
 Health check (pistar-health-check)
-  6. Polls for up to 2 minutes: Pi-Star MCP running and answering, and
+  7. Polls for up to 2 minutes: Pi-Star MCP running and answering, and
      an address on any interface (skipped if no network is configured)
-  7. If healthy, clears PENDING — upgrade confirmed
-  8. If not, watchdog handles rollback on next reboot
+  8. If healthy, clears PENDING — upgrade confirmed
+  9. If not, watchdog handles rollback on next reboot
 ```
 
 ### Commands
@@ -213,10 +215,18 @@ Releases are tagged `YYYY.MM.DD.RR`, where `RR` is the release number for that d
 
 | Partition | Size | Format | Mount Point | Purpose |
 |-----------|------|--------|-------------|---------|
-| P1 | 256 MB | FAT32 | `/boot/firmware` | Boot files, kernel, firmware, config |
+| P1 | 256 MB | FAT32 | `/boot/firmware` | GPU firmware, `config.txt`, `slot.conf`; each slot's kernels, device trees, overlays and `cmdline.txt` in `slotA/` and `slotB/` |
 | P2 | 1.5 GB | ext4 | `/` (slot A) | Root filesystem A |
 | P3 | 1.5 GB | ext4 | `/` (slot B) | Root filesystem B |
 | P4 | Remaining | ext4 | `/data` | Persistent user data (expands on first boot) |
+
+### Boot Slots
+
+Each root slot has its own directory on the boot partition, `slotA/` (root on P2) and `slotB/` (root on P3), holding its kernels, device trees, overlays and `cmdline.txt`. The Raspberry Pi firmware loads the slot named by `os_prefix` in `config.txt`. Switching slots, for an upgrade or a rollback, rewrites that one line; an upgrade never touches the running slot's boot files. GPU firmware (`start*.elf`, `fixup*.dat`, `bootcode.bin`) is shared at the root of the partition, because the firmware loads it before reading `config.txt`.
+
+Images from before this layout are migrated automatically on first boot by `pistar-boot-layout`, which builds both slot directories and leaves the old root-level files in place as a fallback.
+
+**If a slot won't boot:** put the SD card in a PC, open `config.txt` on the boot partition, and change `os_prefix=slotA/` to `os_prefix=slotB/` (or the other way round). The block at the end of `config.txt` explains this too.
 
 ### What Persists Across Upgrades
 

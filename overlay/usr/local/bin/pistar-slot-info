@@ -11,6 +11,12 @@ fi
 
 # shellcheck disable=SC1090
 . "$SLOT_CONF"
+# shellcheck source=../lib/pistar-os/bootslot.sh
+. /usr/local/lib/pistar-os/bootslot.sh
+
+# Where the firmware loads kernels, device trees and overlays from
+boot_dir="$BOOTSLOT_FW_DIR/$(boot_prefix)"
+[ -n "$(boot_prefix)" ] || boot_dir="$BOOTSLOT_FW_DIR/ (shared layout)"
 
 # Map slot letter to partition number
 slot_to_part() {
@@ -40,6 +46,7 @@ echo "Slot A:       $slot_a_ver"
 echo "Slot B:       $slot_b_ver"
 echo "Boot Status:  $boot_status"
 echo "Pending:      $PENDING"
+echo "Boot files:   $boot_dir"
 
 if [ -n "$PREVIOUS_SLOT" ]; then
 	prev_part=$(slot_to_part "$PREVIOUS_SLOT")

@@ -5,7 +5,6 @@
 set -e
 
 SLOT_CONF="/boot/firmware/slot.conf"
-CMDLINE="/boot/firmware/cmdline.txt"
 OS_CONF="/etc/pistar-os.conf"
 OS_RELEASE="/etc/pistar-os-release"
 TMP_DIR="/data/tmp"
@@ -29,15 +28,21 @@ usage() {
 . "$SLOT_CONF"
 # shellcheck disable=SC1090
 . "$OS_CONF"
+# shellcheck source=../lib/pistar-os/bootslot.sh
+. /usr/local/lib/pistar-os/bootslot.sh
+
+# The slot the firmware boots is the one os_prefix selects in config.txt;
+# slot.conf is the fallback on the old shared layout.
+BOOT_ACTIVE=$(active_slot)
+[ -n "$BOOT_ACTIVE" ] && ACTIVE_SLOT="$BOOT_ACTIVE"
 
 # Determine inactive slot
 case "$ACTIVE_SLOT" in
-	A) INACTIVE_SLOT="B"; INACTIVE_PART="3" ;;
-	B) INACTIVE_SLOT="A"; INACTIVE_PART="2" ;;
+	A|B) INACTIVE_SLOT=$(other_slot "$ACTIVE_SLOT") ;;
 	*) die "invalid ACTIVE_SLOT: $ACTIVE_SLOT" ;;
 esac
-
-INACTIVE_DEV="/dev/mmcblk0p${INACTIVE_PART}"
+INACTIVE_PART=$(slot_part "$INACTIVE_SLOT")
+INACTIVE_DEV=$(slot_dev "$INACTIVE_SLOT")
 
 # manifest_value KEY — print KEY's value from the downloaded manifest.
 # The manifest comes from the network, so it is parsed rather than sourced.
@@ -121,6 +126,11 @@ check_update() {
 }
 
 install_update() {
+	# Boot files must be per slot, so installing never touches the running
+	# slot's kernel. Older images are migrated by pistar-boot-layout at boot.
+	[ -n "$BOOT_ACTIVE" ] || \
+		die "the boot partition still uses the shared layout; reboot once so it can be migrated, then retry"
+
 	fetch_manifest
 
 	ROOTFS_FILE="$ROOTFS_FILENAME"
@@ -158,30 +168,21 @@ install_update() {
 	echo "Extracting rootfs to slot $INACTIVE_SLOT..."
 	tar -xJf "$TMP_DIR/$ROOTFS_FILE" -C "$MOUNT_DIR"
 
-	# Copy kernel files from extracted rootfs to boot partition
-	echo "Updating boot files for slot $INACTIVE_SLOT..."
-	if [ ! -d "$MOUNT_DIR/boot/firmware" ]; then
+	# Build the new slot's boot directory from the extracted rootfs. The
+	# running slot's directory is never touched.
+	echo "Installing boot files for slot $INACTIVE_SLOT..."
+	if ! install_slot_boot "$MOUNT_DIR/boot/firmware" "$INACTIVE_SLOT" \
+		"$BOOTSLOT_FW_DIR/slot$ACTIVE_SLOT/cmdline.txt"; then
 		umount "$MOUNT_DIR"
 		rmdir "$MOUNT_DIR"
-		die "no /boot/firmware in rootfs tarball"
+		die "could not install boot files for slot $INACTIVE_SLOT"
 	fi
-
-	for f in "$MOUNT_DIR"/boot/firmware/kernel*.img \
-	         "$MOUNT_DIR"/boot/firmware/vmlinuz* \
-	         "$MOUNT_DIR"/boot/firmware/*.dtb; do
-		[ -f "$f" ] || continue
-		cp "$f" /boot/firmware/
-	done
 
 	umount "$MOUNT_DIR"
 	rmdir "$MOUNT_DIR"
 
-	# Update cmdline.txt root= parameter
-	if [ -f "$CMDLINE" ]; then
-		sed -i "s|root=/dev/mmcblk0p[0-9]*|root=/dev/mmcblk0p${INACTIVE_PART}|" "$CMDLINE"
-	else
-		die "$CMDLINE not found"
-	fi
+	# Switch the firmware to the new slot: one rewrite of config.txt
+	set_active_slot "$INACTIVE_SLOT" || die "could not update config.txt"
 
 	# Update slot.conf
 	case "$INACTIVE_SLOT" in

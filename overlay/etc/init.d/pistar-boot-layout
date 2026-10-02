@@ -1,0 +1,68 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh
+# pistar-boot-layout - Move the boot partition to per-slot boot directories
+# Part of Pi-Star OS
+#
+# Older images kept one shared set of kernels, device trees and overlays
+# at the root of the boot partition. This runs once on such a system:
+# it builds /boot/firmware/slotA/ and slotB/ (the inactive slot's files
+# come from its own root partition), then points config.txt's os_prefix
+# at the running slot. The old root-level files are left as a fallback.
+#
+# On systems already using per-slot directories it does nothing.
+
+description="Pi-Star OS per-slot boot directory migration" # used by OpenRC
+
+depend() {
+	need localmount
+	before pistar-boot-watchdog pistar-health-check
+}
+
+# shellcheck source=../../usr/local/lib/pistar-os/bootslot.sh
+. /usr/local/lib/pistar-os/bootslot.sh
+
+FW_DIR="$BOOTSLOT_FW_DIR"
+OTHER_MNT="/run/pistar-boot-layout"
+
+start() {
+	[ -n "$(boot_prefix)" ] && return 0
+
+	ebegin "Moving boot files to per-slot directories"
+
+	# The running slot is the partition the kernel was booted with
+	root=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
+	case "$root" in
+		"$(slot_dev A)") active=A ;;
+		"$(slot_dev B)") active=B ;;
+		*)
+			eerror "Unrecognised root device '$root' - leaving the boot layout alone"
+			eend 1
+			return 1
+			;;
+	esac
+	other=$(other_slot "$active")
+
+	if ! install_slot_boot "$FW_DIR" "$active" "$FW_DIR/cmdline.txt"; then
+		eend 1 "Could not build slot$active - leaving the boot layout alone"
+		return 1
+	fi
+
+	# The inactive slot's own boot files, if it has ever been installed
+	mkdir -p "$OTHER_MNT"
+	if mount -o ro "$(slot_dev "$other")" "$OTHER_MNT" 2>/dev/null; then
+		if ls "$OTHER_MNT"/boot/firmware/kernel*.img >/dev/null 2>&1; then
+			install_slot_boot "$OTHER_MNT/boot/firmware" "$other" "$FW_DIR/cmdline.txt" || \
+				ewarn "Could not build slot$other from its root partition"
+		fi
+		umount "$OTHER_MNT"
+	fi
+	rmdir "$OTHER_MNT" 2>/dev/null || true
+
+	if ! set_active_slot "$active"; then
+		eend 1 "Could not update config.txt"
+		return 1
+	fi
+
+	einfo "Boot files now in $FW_DIR/slot$active/ (os_prefix=slot$active/)"
+	eend 0
+}
