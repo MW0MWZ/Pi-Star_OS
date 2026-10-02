@@ -15,7 +15,7 @@
 description="Pi-Star OS health check (validates A/B slot after upgrade)" # used by OpenRC
 
 depend() {
-	use net
+	use net logger
 	after net pistar-boot-watchdog pistar-mcp
 }
 
@@ -58,6 +58,11 @@ network_up() {
 	ip -4 -o addr show scope global 2>/dev/null | grep ' inet ' | grep -qv ' inet 169\.254\.'
 }
 
+# log MESSAGE - record the outcome in syslog as well as on the console
+log() {
+	logger -t pistar-health-check -p daemon.notice "$*"
+}
+
 write_slot_conf() {
 	cat > "$SLOT_CONF" <<EOF
 ACTIVE_SLOT=$ACTIVE_SLOT
@@ -83,7 +88,10 @@ start() {
 
 	need_network=true
 	network_configured || need_network=false
-	$need_network || einfo "No network configured - skipping the network check"
+	if ! $need_network; then
+		einfo "No network configured - skipping the network check"
+		log "No network configured - skipping the network check"
+	fi
 
 	elapsed=0
 	while :; do
@@ -95,6 +103,7 @@ start() {
 
 		if [ -z "$failed" ]; then
 			einfo "Health check passed after ${elapsed}s - marking slot $ACTIVE_SLOT as good"
+			log "Slot $ACTIVE_SLOT passed after ${elapsed}s - marked as good"
 			write_slot_conf
 			eend 0
 			return 0
@@ -109,5 +118,6 @@ start() {
 
 	ewarn "Health check failed after ${HEALTH_TIMEOUT}s:${failed}"
 	ewarn "Slot $ACTIVE_SLOT remains PENDING (watchdog will handle rollback)"
+	log "Slot $ACTIVE_SLOT failed after ${HEALTH_TIMEOUT}s:${failed} - remains PENDING"
 	eend 1
 }
