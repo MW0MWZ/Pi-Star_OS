@@ -218,13 +218,14 @@ Releases are tagged `YYYY.MM.DD.RR`, where `RR` is the release number for that d
 
 ### What Persists Across Upgrades
 
-The `/data` partition provides persistence. `/data/home` is bind-mounted via fstab. All `/data/etc/*/` directories are automatically bind-mounted over their `/etc/` counterparts by the `pistar-bindmounts` init script at boot — empty directories are seeded from rootfs defaults on first use.
+The `/data` partition provides persistence. `/data/home` is bind-mounted via fstab. All `/data/etc/*/` and `/data/var/lib/*/` directories are automatically bind-mounted over their `/etc/` and `/var/lib/` counterparts by the `pistar-bindmounts` init script at boot — empty directories are seeded from rootfs defaults on first use. `/data/etc/dhcpcd` and `/data/var/lib/pistar-mcp` are created at boot if missing, so older installs gain them too.
 
 | Path | Bind Mount Source | Contents |
 |------|-------------------|----------|
 | `/home` | `/data/home` | User home directories |
 | `/etc/dropbear` | `/data/etc/dropbear` | SSH host keys |
 | `/etc/wpa_supplicant` | `/data/etc/wpa_supplicant` | WiFi configuration |
+| `/etc/dhcpcd` | `/data/etc/dhcpcd` | `dhcpcd.conf` (static addressing); `/etc/dhcpcd.conf` is a symlink to it |
 | `/etc/mmdvmhost` | `/data/etc/mmdvmhost` | MMDVM-Host, MMDVM-Display and MMDVM-Info configuration |
 | `/etc/dmrclients` | `/data/etc/dmrclients` | DMR gateway/client configs |
 | `/etc/dstarclients` | `/data/etc/dstarclients` | D-Star gateway/client configs |
@@ -235,6 +236,9 @@ The `/data` partition provides persistence. `/data/home` is bind-mounted via fst
 | `/etc/aprsclients` | `/data/etc/aprsclients` | APRS gateway configs |
 | `/etc/pocsagclients` | `/data/etc/pocsagclients` | POCSAG gateway configs |
 | `/etc/dstarrepeater` | `/data/etc/dstarrepeater` | D-Star repeater configs |
+| `/var/lib/pistar-mcp` | `/data/var/lib/pistar-mcp` | Pi-Star MCP state (host file updates, backups) |
+
+The `pi-star` password hash is kept in `/data/etc/pistar-user.conf`, created at boot if missing. Each newly installed slot restores it on its first boot; on later boots the saved copy is updated from `/etc/shadow`, so changes made with `passwd` or from the dashboard survive upgrades.
 
 Adding persistence for a new package is as simple as creating its `/data/etc/<name>/` directory.
 
@@ -245,8 +249,8 @@ Only user state lives in these directories: packages install their configuration
 ```
 boot runlevel:
   localmount            mounts /boot/firmware, /data, /home bind mount
-  pistar-bindmounts     bind mounts /data/etc/*/ over /etc/*/
-  pistar-config         processes config file if present
+  pistar-bindmounts     bind mounts /data/etc/*/ and /data/var/lib/*/ over the rootfs
+  pistar-config         processes config file if present; keeps the saved password hash in step
   pistar-boot-watchdog  increments boot counter if PENDING
   pistar-data-resize    expands /data on first boot
   wpa_supplicant        connects to WiFi
@@ -255,6 +259,7 @@ boot runlevel:
 default runlevel:
   pistar-health-check   validates network, clears PENDING
   dropbear              SSH server
+  crond                 runs scheduled updates set up by Pi-Star MCP
 ```
 
 ## Compatibility

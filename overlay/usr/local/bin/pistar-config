@@ -14,6 +14,10 @@ CONFIG_FILE="/boot/firmware/pistar-config.txt"
 SAVED_CONF="/data/etc/pistar-user.conf"
 SLOT_CONF="/boot/firmware/slot.conf"
 LOG_FILE="/var/log/pistar-config.log"
+# Present once this slot's /etc/shadow has taken the saved password hash.
+# It lives on the slot's own /etc, so each newly installed slot restores
+# the hash once; after that the slot's hash is the current one.
+PW_MARKER="/etc/.pistar-password-restored"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
@@ -28,6 +32,21 @@ elif [ -f "$SAVED_CONF" ]; then
     SOURCE="$SAVED_CONF"
     log "Applying saved configuration from $SAVED_CONF..."
 else
+    # Nothing to apply. Still record the current password hash so that a
+    # password changed later (Pi-Star MCP updates this file) survives A/B
+    # upgrades, which bring a fresh /etc/shadow.
+    HASH=$(sed -n 's/^pi-star:\([^:]*\):.*/\1/p' /etc/shadow)
+    if [ -n "$HASH" ]; then
+        mkdir -p /data/etc
+        cat > "$SAVED_CONF" <<EOF
+# Pi-Star OS saved user configuration
+# Generated: $(date '+%Y-%m-%d %H:%M:%S')
+user_password_hash=$HASH
+EOF
+        chmod 0600 "$SAVED_CONF"
+        log "Created $SAVED_CONF with the current password hash"
+    fi
+    touch "$PW_MARKER"
     exit 0
 fi
 
@@ -58,6 +77,10 @@ while IFS='=' read -r key value; do
     # Trim whitespace
     key=$(echo "$key" | tr -d ' ')
     value=$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    # Unset settings (e.g. "hostname=" in the saved config when
+    # pistar-config.txt didn't set one) must not overwrite anything.
+    [ -n "$value" ] || continue
 
     case "$key" in
         wifi_ssid|wifi_ssid_*)
@@ -95,10 +118,23 @@ while IFS='=' read -r key value; do
             ;;
 
         user_password_hash)
-            # Only process from saved config — restore hash directly to shadow
+            # Only process from saved config. On a slot's first boot, restore
+            # the saved hash; afterwards keep the saved copy in step with the
+            # slot's hash so changes made with passwd also survive upgrades.
             if ! $FROM_CONFIG_TXT; then
-                log "Restoring pi-star password hash"
-                sed -i "s|^pi-star:[^:]*:|pi-star:${value}:|" /etc/shadow
+                if [ ! -f "$PW_MARKER" ]; then
+                    log "Restoring pi-star password hash"
+                    sed -i "s|^pi-star:[^:]*:|pi-star:${value}:|" /etc/shadow
+                    touch "$PW_MARKER"
+                else
+                    current=$(sed -n 's/^pi-star:\([^:]*\):.*/\1/p' /etc/shadow)
+                    if [ -n "$current" ] && [ "$current" != "$value" ]; then
+                        log "Saving changed pi-star password hash"
+                        awk -v h="$current" 'BEGIN { FS = OFS = "=" } $1 == "user_password_hash" { $0 = "user_password_hash=" h } { print }' \
+                            "$SAVED_CONF" > "$SAVED_CONF.tmp" && \
+                            chmod 0600 "$SAVED_CONF.tmp" && mv "$SAVED_CONF.tmp" "$SAVED_CONF"
+                    fi
+                fi
             fi
             ;;
 
@@ -198,6 +234,7 @@ EOF
 
     chmod 0600 "$SAVED_CONF"
     chown root:root "$SAVED_CONF"
+    touch "$PW_MARKER"
     log "Saved user configuration to $SAVED_CONF"
 
     # Delete config file — it contains passwords

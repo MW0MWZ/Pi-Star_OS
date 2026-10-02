@@ -1,35 +1,52 @@
 #!/sbin/openrc-run
 # shellcheck shell=sh
-# pistar-bindmounts - Bind mount persistent /data/etc dirs over /etc
+# pistar-bindmounts - Bind mount persistent /data directories over the rootfs
 # Part of Pi-Star OS
 
-description="Bind mount /data/etc/* directories over /etc/*"
+description="Bind mount /data/etc/* and /data/var/lib/* over /etc and /var/lib" # used by OpenRC
+
+# Each /data/<root>/<name>/ is bind-mounted over /<root>/<name>/.
+PERSIST_ROOTS="etc var/lib"
+
+# Always persisted: created on /data when the rootfs has them, so installs
+# whose /data predates them pick them up too.
+#   etc/dhcpcd          - dhcpcd.conf (static addressing written by Pi-Star MCP)
+#   var/lib/pistar-mcp  - Pi-Star MCP state (host file updates, backups)
+ENSURE_DIRS="etc/dhcpcd var/lib/pistar-mcp"
 
 depend() {
 	need localmount
-	before pistar-config networking wpa_supplicant dropbear
+	before pistar-config networking wpa_supplicant dhcpcd dropbear
 }
 
 start() {
-	ebegin "Bind mounting persistent /data/etc directories"
+	ebegin "Bind mounting persistent /data directories"
 
-	for src in /data/etc/*/; do
-		[ -d "$src" ] || continue
-		name="${src%/}"
-		name="${name##*/}"
-		dest="/etc/$name"
-
-		# Skip if no matching rootfs directory
-		[ -d "$dest" ] || continue
-
-		# Seed empty /data dirs from rootfs defaults
-		if [ -z "$(ls -A "$src" 2>/dev/null)" ]; then
-			cp -a "$dest/." "$src/"
+	for dir in $ENSURE_DIRS; do
+		if [ -d "/$dir" ] && [ ! -d "/data/$dir" ]; then
+			mkdir -p "/data/$dir"
 		fi
+	done
 
-		mount --bind "$src" "$dest"
+	for root in $PERSIST_ROOTS; do
+		for src in /data/"$root"/*/; do
+			[ -d "$src" ] || continue
+			name="${src%/}"
+			name="${name##*/}"
+			dest="/$root/$name"
 
-		prune_stale_templates "$name"
+			# Skip if no matching rootfs directory
+			[ -d "$dest" ] || continue
+
+			# Seed empty /data dirs from rootfs defaults
+			if [ -z "$(ls -A "$src" 2>/dev/null)" ]; then
+				cp -a "$dest/." "$src/"
+			fi
+
+			mount --bind "$src" "$dest"
+
+			[ "$root" = "etc" ] && prune_stale_templates "$name"
+		done
 	done
 
 	eend 0
@@ -55,15 +72,19 @@ prune_stale_templates() {
 }
 
 stop() {
-	ebegin "Unmounting persistent /data/etc directories"
+	ebegin "Unmounting persistent /data directories"
 
-	for src in /data/etc/*/; do
-		[ -d "$src" ] || continue
-		name="${src%/}"
-		name="${name##*/}"
-		dest="/etc/$name"
+	for root in $PERSIST_ROOTS; do
+		for src in /data/"$root"/*/; do
+			[ -d "$src" ] || continue
+			name="${src%/}"
+			name="${name##*/}"
+			dest="/$root/$name"
 
-		mountpoint -q "$dest" && umount "$dest"
+			# /proc/mounts rather than mountpoint(1), which misses bind
+			# mounts from the same filesystem
+			grep -q " $dest " /proc/mounts && umount "$dest"
+		done
 	done
 
 	eend 0

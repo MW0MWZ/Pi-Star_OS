@@ -282,6 +282,8 @@ jobs:
         rc-update add dropbear default
         rc-update add wpa_supplicant boot
         rc-update add dhcpcd boot
+        # crond runs the scheduled updates Pi-Star MCP writes to /etc/crontabs
+        rc-update add crond default
 
         # Configure hostname
         echo "pi-star" > /etc/hostname
@@ -354,7 +356,11 @@ jobs:
 
     - name: Configure networking
       run: |
-        sudo tee /mnt/root/etc/dhcpcd.conf << 'EOF'
+        # dhcpcd.conf lives in /etc/dhcpcd/ so it can be persisted on /data
+        # with the other /etc directories (Pi-Star MCP rewrites it for static
+        # addressing). /etc/dhcpcd.conf stays as a symlink for dhcpcd.
+        sudo mkdir -p /mnt/root/etc/dhcpcd
+        sudo tee /mnt/root/etc/dhcpcd/dhcpcd.conf << 'EOF'
         # Pi-Star OS dhcpcd configuration
         hostname
         clientid
@@ -369,6 +375,7 @@ jobs:
         waitip 4
         nohook wpa_supplicant
         EOF
+        sudo ln -sf dhcpcd/dhcpcd.conf /mnt/root/etc/dhcpcd.conf
 
         sudo mkdir -p /mnt/root/usr/lib/dhcpcd/dhcpcd-hooks
         sudo tee /mnt/root/usr/lib/dhcpcd/dhcpcd-hooks/30-time-sync << 'EOF'
@@ -551,6 +558,8 @@ jobs:
         sudo mkdir -p /mnt/data/etc/pocsagclients
         sudo mkdir -p /mnt/data/etc/dstarrepeater
         sudo mkdir -p /mnt/data/etc/pistar-mcp
+        sudo mkdir -p /mnt/data/etc/dhcpcd
+        sudo mkdir -p /mnt/data/var/lib/pistar-mcp
         sudo mkdir -p /mnt/data/home/pi-star
         sudo mkdir -p /mnt/data/tmp
 
