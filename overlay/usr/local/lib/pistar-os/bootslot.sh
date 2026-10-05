@@ -129,13 +129,20 @@ set_active_slot() {
 		/^[[:space:]]*os_prefix[[:space:]]*=/ { next }
 		{ print }
 	' "$cfg" > "$tmp"
+	# os_prefix must apply to every model, so it needs an [all] filter -
+	# unless the section in force at the end of the file already is one.
+	filter=""
+	last=$(sed -n 's/^[[:space:]]*\(\[[^]]*\]\).*/\1/p' "$tmp" | tail -1)
+	if [ -n "$last" ] && [ "$last" != "[all]" ]; then
+		filter="[all]
+"
+	fi
 	cat >> "$tmp" <<EOF
 # >>> Pi-Star OS boot slot (managed by pistar-upgrade / pistar-rollback)
 # The active slot's kernels, device trees, overlays and cmdline.txt live
 # under os_prefix. If this slot won't boot, edit this file on a PC and
 # change slot$slot/ to slot$(other_slot "$slot")/.
-[all]
-os_prefix=slot$slot/
+${filter}os_prefix=slot$slot/
 # <<< Pi-Star OS boot slot
 EOF
 	sync
