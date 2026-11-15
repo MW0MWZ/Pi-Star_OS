@@ -23,6 +23,15 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+# ── Migrations for persisted files ───────────────────────────────────
+# Images up to 2026.11.15 wrote "nocarrier" into dhcpcd.conf; it is not a
+# dhcpcd option and is logged as an error at every start.
+DHCPCD_CONF="/etc/dhcpcd/dhcpcd.conf"
+if [ -f "$DHCPCD_CONF" ] && grep -qx 'nocarrier' "$DHCPCD_CONF"; then
+    sed -i '/^nocarrier$/d' "$DHCPCD_CONF"
+    log "Removed unknown option 'nocarrier' from $DHCPCD_CONF"
+fi
+
 # ── Phase 1: Source selection ────────────────────────────────────────
 SOURCE=""
 if [ -f "$CONFIG_FILE" ]; then

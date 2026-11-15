@@ -399,7 +399,6 @@ jobs:
         option interface_mtu
         require dhcp_server_identifier
         slaac hwaddr
-        nocarrier
         waitip 4
         nohook wpa_supplicant
         EOF
