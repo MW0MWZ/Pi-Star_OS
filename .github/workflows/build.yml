@@ -369,6 +369,19 @@ jobs:
         sudo umount /mnt/root/sys
         sudo umount /mnt/root/proc
 
+    - name: Check the image has the current Pi-Star MCP
+      run: |
+        # apk.pistar.uk sits behind Cloudflare, which can serve a stale
+        # index for hours after a release; gh-pages on GitHub is the truth.
+        want=$(curl -fsSL "https://raw.githubusercontent.com/MW0MWZ/MMDVM_APK/gh-pages/v${ALPINE_VERSION}/community/${ALPINE_ARCH}/APKINDEX.tar.gz" \
+          | tar -xzO APKINDEX | awk '/^P:/ { p = ($0 == "P:pi-star") } p && /^V:/ { print substr($0, 3) }' | sort -V | tail -1)
+        got=$(sudo awk '/^P:/ { p = ($0 == "P:pi-star") } p && /^V:/ { print substr($0, 3); exit }' /mnt/root/lib/apk/db/installed)
+        echo "pi-star: installed ${got:-none}, current release ${want:-unknown}"
+        if [ -z "$want" ] || [ "$got" != "$want" ]; then
+          echo "::error::Image has pi-star ${got:-none}, expected ${want:-unknown} (stale apk.pistar.uk index?)"
+          exit 1
+        fi
+
     - name: Configure networking
       run: |
         # dhcpcd.conf lives in /etc/dhcpcd/ so it can be persisted on /data
