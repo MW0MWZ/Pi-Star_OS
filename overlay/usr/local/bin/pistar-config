@@ -189,6 +189,17 @@ while IFS='=' read -r key value; do
             fi
             ;;
 
+        backup_passphrase)
+            # The passphrase of an encrypted Pi-Star backup put on the boot
+            # partition: Pi-Star MCP restores the backup as it starts. Handed
+            # over in RAM, readable only by root, never saved; MCP deletes
+            # it once used.
+            if $FROM_CONFIG_TXT; then
+                (umask 077; printf '%s\n' "$value" > /run/pistar-backup-passphrase)
+                log "Backup passphrase handed to Pi-Star MCP"
+            fi
+            ;;
+
         locale)
             SAVE_LOCALE="$value"
             log "Setting locale: $value"
