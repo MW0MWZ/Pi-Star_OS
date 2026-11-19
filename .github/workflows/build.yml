@@ -568,9 +568,9 @@ jobs:
         #ssh_key=ssh-rsa AAAAB3NzaC1yc2EAAAA... your-email@example.com
 
         # === RESTORE A BACKUP ===
-        # Copy a Pi-Star backup (pistar-backup-....tar.gz or .tar.gz.age,
+        # Copy a Pi-Star backup (pistar-backup-....tar.gz or .tar.gz.enc,
         # from the dashboard's Profiles page) onto this boot partition: it is
-        # restored as the hotspot starts. For an encrypted (.age) backup,
+        # restored as the hotspot starts. For an encrypted (.enc) backup,
         # give its passphrase here:
         #backup_passphrase=YourBackupPassphrase
 
