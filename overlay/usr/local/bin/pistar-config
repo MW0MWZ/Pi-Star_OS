@@ -72,6 +72,7 @@ FROM_CONFIG_TXT=false
 
 # ── Phase 2: Parse and apply ─────────────────────────────────────────
 WIFI_COUNT=0
+CONFIG_KEYS=""
 SAVE_HOSTNAME=""
 SAVE_TIMEZONE=""
 SAVE_LOCALE=""
@@ -90,6 +91,11 @@ while IFS='=' read -r key value; do
     # Unset settings (e.g. "hostname=" in the saved config when
     # pistar-config.txt didn't set one) must not overwrite anything.
     [ -n "$value" ] || continue
+
+    # What pistar-config.txt sets wins over a Pi-Star backup restored (or
+    # Pi-Star 4 settings imported) by Pi-Star MCP: it is told which keys
+    # were set, never their values
+    $FROM_CONFIG_TXT && CONFIG_KEYS="$CONFIG_KEYS $key"
 
     case "$key" in
         wifi_ssid|wifi_ssid_*)
@@ -208,6 +214,11 @@ while IFS='=' read -r key value; do
             ;;
     esac
 done < "$SOURCE"
+
+# The keys pistar-config.txt set, for Pi-Star MCP (in RAM, root only)
+if $FROM_CONFIG_TXT && [ -n "$CONFIG_KEYS" ]; then
+    (umask 077; printf '%s\n' $CONFIG_KEYS > /run/pistar-config-keys)
+fi
 
 # Build wpa_supplicant configuration (only from pistar-config.txt)
 if [ "$WIFI_COUNT" -gt 0 ]; then

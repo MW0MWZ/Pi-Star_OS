@@ -580,8 +580,12 @@ jobs:
         # Copy a Pi-Star backup (pistar-backup-....tar.gz or .tar.gz.enc,
         # from the dashboard's Profiles page) onto this boot partition: it is
         # restored as the hotspot starts. For an encrypted (.enc) backup,
-        # give its passphrase here:
+        # give its passphrase here (or the dashboard asks for it):
         #backup_passphrase=YourBackupPassphrase
+        # A Pi-Star 4 backup (Pi-Star_Config_....zip) can be copied there
+        # too: its settings are brought across in the dashboard's setup.
+        # Whatever this file sets (Wi-Fi, password, hostname, timezone)
+        # wins over the backup's.
 
         # === SYSTEM CONFIGURATION ===
         hostname=pi-star
