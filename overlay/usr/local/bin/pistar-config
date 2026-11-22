@@ -6,8 +6,11 @@
 #   1. /boot/firmware/pistar-config.txt  — fresh settings from user
 #   2. /data/etc/pistar-user.conf        — saved settings from prior boot
 #
-# When pistar-config.txt is present, settings are applied and then
-# persisted to /data/etc/pistar-user.conf so they survive A/B upgrades.
+# When pistar-config.txt is present, the saved settings are applied first
+# and pistar-config.txt's on top; the result is saved to
+# /data/etc/pistar-user.conf so it survives A/B upgrades (a setting
+# pistar-config.txt leaves out keeps its saved value). Pi-Star MCP keeps
+# pistar-user.conf in step with changes made on the dashboard.
 # The pistar-config.txt is DELETED after processing for security.
 
 CONFIG_FILE="/boot/firmware/pistar-config.txt"
@@ -50,12 +53,11 @@ s/[[:space:]]{2,}/ /g
 fi
 
 # ── Phase 1: Source selection ────────────────────────────────────────
-SOURCE=""
+TXT_PRESENT=false
 if [ -f "$CONFIG_FILE" ]; then
-    SOURCE="$CONFIG_FILE"
+    TXT_PRESENT=true
     log "Processing Pi-Star OS configuration from pistar-config.txt..."
 elif [ -f "$SAVED_CONF" ]; then
-    SOURCE="$SAVED_CONF"
     log "Applying saved configuration from $SAVED_CONF..."
 else
     # Nothing to apply. Still record the current password hash so that a
@@ -83,18 +85,20 @@ if [ -f "$SLOT_CONF" ]; then
     log "Active slot: ${ACTIVE_SLOT:-unknown}, pending: ${PENDING:-unknown}"
 fi
 
-# Track which source we came from
-FROM_CONFIG_TXT=false
-[ "$SOURCE" = "$CONFIG_FILE" ] && FROM_CONFIG_TXT=true
-
 # ── Phase 2: Parse and apply ─────────────────────────────────────────
 WIFI_COUNT=0
 CONFIG_KEYS=""
 SAVE_HOSTNAME=""
 SAVE_TIMEZONE=""
 SAVE_LOCALE=""
+SAVE_SSH=""
 SAVE_SSH_PASSWORD=""
+# pistar-config.txt set enable_ssh / asked for something SSH is needed for
+TXT_SET_SSH=false
+TXT_NEEDS_SSH=false
 
+# apply_file FILE: applies one source; FROM_CONFIG_TXT says which it is
+apply_file() {
 while IFS='=' read -r key value; do
     # Skip comments and empty lines
     case "$key" in
@@ -170,8 +174,15 @@ while IFS='=' read -r key value; do
             fi
             ;;
 
+        enable_ssh)
+            # SSH on (dropbear started at boot) or off
+            if [ "$value" = "false" ]; then SAVE_SSH=false; else SAVE_SSH=true; fi
+            if $FROM_CONFIG_TXT; then TXT_SET_SSH=true; fi
+            ;;
+
         enable_ssh_password)
             SAVE_SSH_PASSWORD="$value"
+            if [ "$value" = "true" ] && $FROM_CONFIG_TXT; then TXT_NEEDS_SSH=true; fi
             if [ "$value" = "true" ]; then
                 log "Enabling SSH password authentication"
                 sed -i 's/DROPBEAR_OPTS=.*/DROPBEAR_OPTS=""/' /etc/conf.d/dropbear
@@ -184,9 +195,18 @@ while IFS='=' read -r key value; do
         ssh_key)
             # Only process from pistar-config.txt — keys persist via bind mount
             if $FROM_CONFIG_TXT; then
-                log "Adding SSH public key"
+                TXT_NEEDS_SSH=true
                 mkdir -p /home/pi-star/.ssh
-                echo "$value" >> /home/pi-star/.ssh/authorized_keys
+                # A key already there (the same key, whatever its comment)
+                # is not added again
+                blob=$(echo "$value" | awk '{ for (i = 1; i < NF; i++) if ($i ~ /^(ssh-|ecdsa-|sk-)/) { print $(i + 1); exit } }')
+                if [ -n "$blob" ] && [ -f /home/pi-star/.ssh/authorized_keys ] && \
+                    awk -v b="$blob" '{ for (i = 1; i <= NF; i++) if ($i == b) f = 1 } END { exit !f }' /home/pi-star/.ssh/authorized_keys; then
+                    log "SSH public key already present"
+                else
+                    log "Adding SSH public key"
+                    echo "$value" >> /home/pi-star/.ssh/authorized_keys
+                fi
                 chmod 700 /home/pi-star/.ssh
                 chmod 600 /home/pi-star/.ssh/authorized_keys
                 chown -R pi-star:pi-star /home/pi-star/.ssh
@@ -230,10 +250,39 @@ while IFS='=' read -r key value; do
             echo "export LANG=$value" > /etc/profile.d/locale.sh
             ;;
     esac
-done < "$SOURCE"
+done < "$1"
+}
+
+# The saved settings, then pistar-config.txt's on top
+if [ -f "$SAVED_CONF" ]; then
+    FROM_CONFIG_TXT=false
+    apply_file "$SAVED_CONF"
+fi
+if $TXT_PRESENT; then
+    FROM_CONFIG_TXT=true
+    apply_file "$CONFIG_FILE"
+fi
+
+# SSH on or off: on unless set off (a newly installed slot starts with it
+# on). pistar-config.txt turns it on only when it sets enable_ssh=true, or
+# (not setting enable_ssh) asks for something SSH is needed for: a key, or
+# password logins. Being on the card alone changes nothing.
+if $TXT_NEEDS_SSH && ! $TXT_SET_SSH && [ "$SAVE_SSH" = "false" ]; then
+    SAVE_SSH=true
+    log "pistar-config.txt sets up SSH access: turning SSH on"
+fi
+if [ "$SAVE_SSH" = "false" ]; then
+    if [ -e /etc/runlevels/default/dropbear ]; then
+        rc-update del dropbear default >/dev/null 2>&1
+        log "SSH turned off"
+    fi
+elif [ ! -e /etc/runlevels/default/dropbear ]; then
+    rc-update add dropbear default >/dev/null 2>&1
+    log "SSH turned on"
+fi
 
 # The keys pistar-config.txt set, for Pi-Star MCP (in RAM, root only)
-if $FROM_CONFIG_TXT && [ -n "$CONFIG_KEYS" ]; then
+if $TXT_PRESENT && [ -n "$CONFIG_KEYS" ]; then
     (umask 077; printf '%s\n' $CONFIG_KEYS > /run/pistar-config-keys)
 fi
 
@@ -261,27 +310,29 @@ WPA_HEADER
 fi
 
 # ── Phase 3: Save and clean up (only from pistar-config.txt) ─────────
-if $FROM_CONFIG_TXT; then
+if $TXT_PRESENT; then
     # Extract the password hash that chpasswd just set
     HASH=$(sed -n 's/^pi-star:\([^:]*\):.*/\1/p' /etc/shadow)
 
     # Ensure /data/etc exists
     mkdir -p /data/etc
 
-    # Write saved config (overwrites any previous)
-    cat > "$SAVED_CONF" <<EOF
-# Pi-Star OS saved user configuration
-# Generated: $(date '+%Y-%m-%d %H:%M:%S')
-# Do not edit — this file is overwritten when pistar-config.txt is processed.
-user_password_hash=$HASH
-enable_ssh_password=${SAVE_SSH_PASSWORD:-false}
-hostname=${SAVE_HOSTNAME}
-timezone=${SAVE_TIMEZONE}
-locale=${SAVE_LOCALE}
-EOF
-
-    chmod 0600 "$SAVED_CONF"
-    chown root:root "$SAVED_CONF"
+    # Write the saved config: the saved settings with pistar-config.txt's
+    # applied over them
+    {
+        echo "# Pi-Star OS saved user configuration"
+        echo "# Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "# Pi-Star MCP keeps this file in step; a pistar-config.txt is merged into it."
+        echo "user_password_hash=$HASH"
+        if [ -n "$SAVE_SSH" ]; then echo "enable_ssh=$SAVE_SSH"; fi
+        if [ -n "$SAVE_SSH_PASSWORD" ]; then echo "enable_ssh_password=$SAVE_SSH_PASSWORD"; fi
+        echo "hostname=${SAVE_HOSTNAME}"
+        echo "timezone=${SAVE_TIMEZONE}"
+        echo "locale=${SAVE_LOCALE}"
+    } > "$SAVED_CONF.tmp"
+    chmod 0600 "$SAVED_CONF.tmp"
+    chown root:root "$SAVED_CONF.tmp"
+    mv "$SAVED_CONF.tmp" "$SAVED_CONF"
     touch "$PW_MARKER"
     log "Saved user configuration to $SAVED_CONF"
 

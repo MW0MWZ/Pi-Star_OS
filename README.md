@@ -117,7 +117,23 @@ enable_ssh_password=true
 
 # Add SSH public key for secure access (recommended)
 ssh_key=ssh-rsa AAAAB3NzaC1yc2EAAAA... user@example.com
+
+# Turn SSH on or off (default: on)
+#enable_ssh=true
 ```
+
+SSH is on unless `enable_ssh=false` is set (here, or with Pi-Star MCP's
+Security settings). A `pistar-config.txt` changes it only when it sets
+`enable_ssh`, or when it asks for SSH access without setting it
+(`ssh_key=`, or `enable_ssh_password=true`): that turns SSH on. Dropping
+the file on the card for other reasons (WiFi, hostname) leaves SSH as it
+was. A key already in `authorized_keys` is not added again.
+
+Settings the file leaves out keep their saved values: the file is merged
+into `/data/etc/pistar-user.conf`, which is applied at every boot (and
+kept in step by Pi-Star MCP), so they survive A/B upgrades. dropbear's
+`-B` (blank password logins) is never used, and is taken out of
+`/etc/conf.d/dropbear` at boot if found.
 
 #### System Settings
 
