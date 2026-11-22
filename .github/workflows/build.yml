@@ -581,6 +581,9 @@ jobs:
         # Add SSH public key for secure access (recommended)
         #ssh_key=ssh-rsa AAAAB3NzaC1yc2EAAAA... your-email@example.com
 
+        # Turn SSH on or off (default: on; also set on the dashboard)
+        #enable_ssh=true
+
         # === RESTORE A BACKUP ===
         # Copy a Pi-Star backup (pistar-backup-....tar.gz or .tar.gz.enc,
         # from the dashboard's Profiles page) onto this boot partition: it is
