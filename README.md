@@ -288,7 +288,14 @@ default runlevel:
   pistar-health-check   checks MCP and network, clears PENDING
   dropbear              SSH server
   crond                 runs scheduled updates set up by Pi-Star MCP
+  ntpd                  keeps the clock set by NTP (pool.ntp.org, time.cloudflare.com)
 ```
+
+There is no real-time clock: each boot starts at the last shutdown time
+(`swclock`), and a new or replaced system at the image's date. `ntpd`
+retries until a server answers and steps the clock however far it is out;
+whenever an address comes up (DHCP or static, IPv4 or IPv6) dhcpcd's
+`30-time-sync` hook restarts it, so the clock is set straight away.
 
 ## Compatibility
 

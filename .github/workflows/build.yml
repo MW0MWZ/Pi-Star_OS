@@ -308,6 +308,8 @@ jobs:
         rc-update add dhcpcd boot
         # crond runs the scheduled updates Pi-Star MCP writes to /etc/crontabs
         rc-update add crond default
+        # ntpd keeps the clock set by NTP (see the dhcpcd time-sync hook)
+        rc-update add ntpd default
 
         # Configure hostname
         echo "pi-star" > /etc/hostname
@@ -327,6 +329,7 @@ jobs:
         mkdir -p /etc/conf.d
         echo 'DROPBEAR_OPTS="-s"' > /etc/conf.d/dropbear
         echo 'wpa_supplicant_args="-q"' > /etc/conf.d/wpa_supplicant
+        echo 'NTPD_OPTS="-N -p pool.ntp.org -p time.cloudflare.com"' > /etc/conf.d/ntpd
 
         # Fix mdev permissions
         sed -i '/# fallback for any!device/i\# Allow Dialout to use /dev/ttyAMA[0-9]\nttyAMA[0-9]*        root:dialout 0660\n\n# For I2C devices\ni2c-[0-9]*          root:dialout 0660\n\n# For SPI devices\nspidev[0-9].[0-9]   root:dialout 0660\n' /etc/mdev.conf
@@ -414,15 +417,17 @@ jobs:
         sudo ln -sf dhcpcd/dhcpcd.conf /mnt/root/etc/dhcpcd.conf
 
         sudo mkdir -p /mnt/root/usr/lib/dhcpcd/dhcpcd-hooks
+        # The clock: ntpd (default runlevel) keeps it set, retrying until a
+        # server answers and stepping it however far it is out (a new or
+        # replaced system starts at the image's date). Each time an
+        # address comes up (from DHCP or static, IPv4 or IPv6) ntpd is
+        # restarted, so the clock is set at once, not at its next poll.
         sudo tee /mnt/root/usr/lib/dhcpcd/dhcpcd-hooks/30-time-sync << 'EOF'
         #!/bin/sh
         case "$reason" in
-        BOUND|INFORM|REBIND|REBOOT)
-            logger -t dhcpcd "Syncing system clock via NTP..."
-            ntpd -q -n -p pool.ntp.org 2>/dev/null || \
-            ntpd -q -n -p time.google.com 2>/dev/null || \
-            ntpd -q -n -p time.cloudflare.com 2>/dev/null || \
-            logger -t dhcpcd "Time sync failed"
+        BOUND|BOUND6|REBIND|REBIND6|REBOOT|REBOOT6|STATIC|INFORM|INFORM6)
+            logger -t dhcpcd "Network up ($reason on $interface): setting the clock by NTP"
+            (rc-service --ifstarted ntpd restart >/dev/null 2>&1 &)
             ;;
         esac
         EOF
