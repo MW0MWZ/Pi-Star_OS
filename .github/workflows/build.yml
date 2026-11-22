@@ -325,7 +325,7 @@ jobs:
 
         # Configure SSH
         mkdir -p /etc/conf.d
-        echo 'DROPBEAR_OPTS="-B -s"' > /etc/conf.d/dropbear
+        echo 'DROPBEAR_OPTS="-s"' > /etc/conf.d/dropbear
         echo 'wpa_supplicant_args="-q"' > /etc/conf.d/wpa_supplicant
 
         # Fix mdev permissions

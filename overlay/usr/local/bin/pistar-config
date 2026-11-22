@@ -32,6 +32,23 @@ if [ -f "$DHCPCD_CONF" ] && grep -qx 'nocarrier' "$DHCPCD_CONF"; then
     log "Removed unknown option 'nocarrier' from $DHCPCD_CONF"
 fi
 
+# dropbear's -B lets an account with an empty password log in with no
+# password; Pi-Star never wants that. Taken out of DROPBEAR_OPTS wherever
+# it is found (images up to 2026.11.22 set it), at every boot, before
+# dropbear starts.
+DROPBEAR_CONF="/etc/conf.d/dropbear"
+if [ -f "$DROPBEAR_CONF" ] && grep -Eq '^DROPBEAR_OPTS=(.*["'"'"'[:space:]])?-B(["'"'"'[:space:]]|$)' "$DROPBEAR_CONF"; then
+    sed -i -E '/^DROPBEAR_OPTS=/{
+:a
+s/(["'"'"'[:space:]]|=)-B(["'"'"'[:space:]]|$)/\1\2/
+ta
+s/=(["'"'"']?)[[:space:]]+/=\1/
+s/[[:space:]]+(["'"'"']?)$/\1/
+s/[[:space:]]{2,}/ /g
+}' "$DROPBEAR_CONF"
+    log "Removed dropbear option -B (blank password logins) from $DROPBEAR_CONF"
+fi
+
 # ── Phase 1: Source selection ────────────────────────────────────────
 SOURCE=""
 if [ -f "$CONFIG_FILE" ]; then
@@ -157,10 +174,10 @@ while IFS='=' read -r key value; do
             SAVE_SSH_PASSWORD="$value"
             if [ "$value" = "true" ]; then
                 log "Enabling SSH password authentication"
-                sed -i 's/DROPBEAR_OPTS=.*/DROPBEAR_OPTS="-B"/' /etc/conf.d/dropbear
+                sed -i 's/DROPBEAR_OPTS=.*/DROPBEAR_OPTS=""/' /etc/conf.d/dropbear
             else
                 log "SSH key-only authentication enabled"
-                sed -i 's/DROPBEAR_OPTS=.*/DROPBEAR_OPTS="-B -s"/' /etc/conf.d/dropbear
+                sed -i 's/DROPBEAR_OPTS=.*/DROPBEAR_OPTS="-s"/' /etc/conf.d/dropbear
             fi
             ;;
 
