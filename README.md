@@ -35,12 +35,18 @@
 
 ### 2. Write to SD Card
 
-```bash
-# Extract the image
-xz -d Pi-Star_OS-YYYY.MM.DD.RR.img.xz
+Use an imaging tool that writes the compressed image as it is:
 
+- **[Raspberry Pi Imager](https://www.raspberrypi.com/software/)**: *Choose OS* → *Use custom*, and pick the `.img.xz`
+- **[balenaEtcher](https://etcher.balena.io/)**: *Flash from file*, and pick the `.img.xz`
+
+Do **not** use Win32DiskImager: it cannot read `.xz`, and writing the compressed file leaves a card with no boot partition (Windows then offers to format it). If your tool only takes a plain `.img`, decompress it first (7-Zip on Windows, `xz -d` on Linux or macOS).
+
+On Linux, without an imaging tool:
+
+```bash
 # Write to SD card (replace /dev/sdX with your SD card device)
-sudo dd if=Pi-Star_OS-YYYY.MM.DD.RR.img of=/dev/sdX bs=4M status=progress conv=fsync
+xz -dc Pi-Star_OS-YYYY.MM.DD.RR.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ### 3. Configure Before First Boot (Optional)
