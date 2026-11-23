@@ -12,7 +12,8 @@ PERSIST_ROOTS="etc var/lib"
 # whose /data predates them pick them up too.
 #   etc/dhcpcd          - dhcpcd.conf (static addressing written by Pi-Star MCP)
 #   var/lib/pistar-mcp  - Pi-Star MCP state (host file updates, backups)
-ENSURE_DIRS="etc/dhcpcd var/lib/pistar-mcp"
+#   var/lib/raspine-watchdog - the boot record and recovery events
+ENSURE_DIRS="etc/dhcpcd var/lib/pistar-mcp var/lib/raspine-watchdog"
 
 depend() {
 	need localmount
