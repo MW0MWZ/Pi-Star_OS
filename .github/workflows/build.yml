@@ -289,6 +289,10 @@ jobs:
           raspios-kernel-v7 \
           raspios-kernel-v8
 
+        # RasPINE's hardware watchdog, service checks and boot record
+        # (pistar-bindmounts keeps its state on /data)
+        apk add --no-cache raspine-watchdog
+
         # Install MMDVM packages (all services start disabled)
         apk add --no-cache pi-star
 
@@ -501,11 +505,6 @@ jobs:
         sudo ln -s /etc/init.d/pistar-boot-layout /mnt/root/etc/runlevels/boot/pistar-boot-layout
         sudo ln -s /etc/init.d/pistar-health-check /mnt/root/etc/runlevels/default/pistar-health-check
         sudo ln -s /etc/init.d/pistar-data-resize /mnt/root/etc/runlevels/boot/pistar-data-resize
-
-        # RasPINE's hardware watchdog, service checks and boot record
-        # (pistar-bindmounts keeps its state on /data)
-        git clone --depth 1 https://github.com/MW0MWZ/RasPINE.git /tmp/raspine
-        sudo /tmp/raspine/watchdog/install.sh /mnt/root
 
         # Create bind-mount stub directories in rootfs
         sudo mkdir -p /mnt/root/home
