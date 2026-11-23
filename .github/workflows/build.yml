@@ -250,6 +250,10 @@ jobs:
         REPOS
 
         apk update
+        # Bring the minirootfs's own packages (musl, zlib, apk-tools...)
+        # up to date: left at the snapshot's versions, a hotspot's first
+        # scheduled update replaces the C library and has to reboot
+        apk upgrade
 
         # Install base packages
         apk add --no-cache \
