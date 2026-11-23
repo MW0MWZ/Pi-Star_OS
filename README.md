@@ -246,7 +246,7 @@ Images from before this layout are migrated automatically on first boot by `pist
 
 ### What Persists Across Upgrades
 
-The `/data` partition provides persistence. `/data/home` is bind-mounted via fstab. All `/data/etc/*/` and `/data/var/lib/*/` directories are automatically bind-mounted over their `/etc/` and `/var/lib/` counterparts by the `pistar-bindmounts` init script at boot — empty directories are seeded from rootfs defaults on first use. `/data/etc/dhcpcd` and `/data/var/lib/pistar-mcp` are created at boot if missing, so older installs gain them too.
+The `/data` partition provides persistence. `/data/home` is bind-mounted via fstab. All `/data/etc/*/` and `/data/var/lib/*/` directories are automatically bind-mounted over their `/etc/` and `/var/lib/` counterparts by the `pistar-bindmounts` init script at boot — empty directories are seeded from rootfs defaults on first use. `/data/etc/dhcpcd`, `/data/var/lib/pistar-mcp` and `/data/var/lib/raspine-watchdog` (the watchdog's boot record and events) are created at boot if missing, so older installs gain them too.
 
 | Path | Bind Mount Source | Contents |
 |------|-------------------|----------|
@@ -281,6 +281,10 @@ boot runlevel:
   pistar-config         processes config file if present; keeps the saved password hash in step
   pistar-boot-watchdog  increments boot counter if PENDING
   pistar-data-resize    expands /data on first boot
+  raspine-watchdog      feeds the Pi's hardware watchdog (raspine-watchdog package)
+  raspine-watchdog-health  restarts Pi-Star MCP when it stops answering, reboots
+                        when that does not help (never into a loop), records
+                        how each boot ended
   wpa_supplicant        connects to WiFi
   dhcpcd                gets IP address
 
@@ -375,6 +379,7 @@ rc-update del myservice default
 | **SSH refused** | Verify dropbear is running: `rc-service dropbear status` |
 | **Config not applied** | File must be named exactly `pistar-config.txt` on the boot partition |
 | **Boot loop** | Watchdog will auto-rollback after 3 failed boots |
+| **Hangs, or Pi-Star MCP stops answering** | RasPINE's watchdog (`raspine-watchdog` package, installed in every image): the Pi's hardware watchdog resets a system frozen for 2 minutes, or a shutdown or reboot that has not finished in 2 minutes; Pi-Star MCP is restarted when its heartbeat stops, the hotspot rebooted after 3 restarts that do not help (at most 3 such reboots in 6 hours, none after two that never got healthy). Events: `/var/lib/raspine-watchdog/events` |
 | **Recovery** | Pop SD card out, mount boot partition on PC, drop `pistar-config.txt`, reboot |
 
 ## Technical Details
