@@ -290,8 +290,10 @@ jobs:
           raspios-kernel-v8
 
         # RasPINE's hardware watchdog, service checks and boot record
-        # (pistar-bindmounts keeps its state on /data)
-        apk add --no-cache raspine-watchdog
+        # (pistar-bindmounts keeps its state on /data), and its
+        # source-based routing (replies leave by the interface they came in
+        # on, with wired and WiFi both up)
+        apk add --no-cache raspine-watchdog raspine-netroute
 
         # Install MMDVM packages (all services start disabled)
         apk add --no-cache pi-star
