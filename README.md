@@ -2,7 +2,8 @@
 
 [![Build Status](https://github.com/MW0MWZ/Pi-Star_OS/actions/workflows/build.yml/badge.svg)](https://github.com/MW0MWZ/Pi-Star_OS/actions/workflows/build.yml)
 [![Latest Release](https://img.shields.io/github/v/release/MW0MWZ/Pi-Star_OS)](https://github.com/MW0MWZ/Pi-Star_OS/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/MW0MWZ/Pi-Star_OS/total)](https://github.com/MW0MWZ/Pi-Star_OS/releases)
+[![Downloads](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/MW0MWZ/Pi-Star_OS/badges/images.json)](https://github.com/MW0MWZ/Pi-Star_OS/releases)
+[![Upgrades](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/MW0MWZ/Pi-Star_OS/badges/upgrades.json)](https://github.com/MW0MWZ/Pi-Star_OS/releases)
 [![Alpine Version](https://img.shields.io/badge/Alpine-v3.23-0D597F)](https://alpinelinux.org)
 [![Kernel](https://img.shields.io/badge/dynamic/json?url=https://raspine.pistar.uk/packages.json&query=$.kernel_version&label=Kernel&color=c51a4a)](https://www.raspberrypi.org)
 

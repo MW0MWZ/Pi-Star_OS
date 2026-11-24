@@ -1,0 +1,85 @@
+name: Download Badges
+
+# The README's download badges: shields.io "endpoint" badges reading JSON
+# kept on the badges branch.
+#   images.json   - full image downloads (*.img.xz): new installs
+#   upgrades.json - rootfs downloads (*.rootfs.tar.xz): existing machines
+#                   upgrading
+# Checksums and manifest.txt (fetched on every update check) are not counted.
+# counts.json keeps each release's counts, so a release that is deleted
+# still counts.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: download-badges
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  badges:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Count downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir badges
+          curl -sfL "https://raw.githubusercontent.com/${{ github.repository }}/badges/counts.json" -o badges/counts.json || echo '{}' > badges/counts.json
+          gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" \
+            -q '.[] | .tag_name as $t | .assets[] | [$t, .name, .download_count] | @tsv' > assets.tsv
+          python3 - <<'EOF'
+          import json
+
+          with open('badges/counts.json') as f:
+              counts = json.load(f)
+
+          now = {}
+          with open('assets.tsv') as f:
+              for line in f:
+                  tag, name, n = line.rstrip('\n').split('\t')
+                  kind = 'images' if name.endswith('.img.xz') else 'upgrades' if name.endswith('.rootfs.tar.xz') else None
+                  if kind:
+                      c = now.setdefault(tag, {'images': 0, 'upgrades': 0})
+                      c[kind] += int(n)
+
+          # GitHub's counts only grow: keep the larger, so a deleted
+          # release keeps its last count
+          for tag, c in now.items():
+              old = counts.get(tag, {})
+              counts[tag] = {k: max(c[k], old.get(k, 0)) for k in ('images', 'upgrades')}
+
+          def short(n):
+              for unit, size in (('M', 1_000_000), ('k', 1_000)):
+                  if n >= size:
+                      return f'{n / size:.1f}'.rstrip('0').rstrip('.') + unit
+              return str(n)
+
+          for kind, label in (('images', 'Downloads'), ('upgrades', 'Upgrades')):
+              total = sum(c[kind] for c in counts.values())
+              badge = {'schemaVersion': 1, 'label': label, 'message': short(total), 'color': 'brightgreen'}
+              with open(f'badges/{kind}.json', 'w') as f:
+                  json.dump(badge, f)
+              print(f'{label}: {total}')
+
+          with open('badges/counts.json', 'w') as f:
+              json.dump(counts, f, indent=1, sort_keys=True)
+          EOF
+
+      - name: Publish to the badges branch
+        run: |
+          set -euo pipefail
+          cd badges
+          git init -q -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Download counts"
+          # One commit, replaced each run: the branch holds data, not history
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" badges
