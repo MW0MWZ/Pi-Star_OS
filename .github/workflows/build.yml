@@ -490,6 +490,9 @@ jobs:
         sudo chmod +x /mnt/root/usr/local/bin/pistar-*
         sudo mkdir -p /mnt/root/usr/local/lib/pistar-os
         sudo cp overlay/usr/local/lib/pistar-os/bootslot.sh /mnt/root/usr/local/lib/pistar-os/
+        # Graphical-boot sentinel: its presence opts MCP + pistar-splash into
+        # framebuffer output (logo + connect screen on tty7).
+        sudo cp overlay/usr/local/lib/pistar-os/graphical-boot /mnt/root/usr/local/lib/pistar-os/
 
         # Copy init scripts
         sudo cp overlay/etc/init.d/pistar-config /mnt/root/etc/init.d/
