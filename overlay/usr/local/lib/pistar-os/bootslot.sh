@@ -97,6 +97,13 @@ make_cmdline() {
 	esac
 	case " $line " in *" panic="*) ;; *) line="$line panic=10" ;; esac
 	case " $line " in *" fsck.repair="*) ;; *) line="$line fsck.repair=yes" ;; esac
+	# A quiet, graphical boot: no scrolling kernel log, no Pi logos, no
+	# console cursor, and the screen never blanks. The Pi-Star logo and the
+	# "connect here" screen run on tty7; Ctrl+Alt+F1 still gives a console.
+	case " $line " in *" quiet "*) ;; *) line="$line quiet" ;; esac
+	case " $line " in *" logo.nologo "*) ;; *) line="$line logo.nologo" ;; esac
+	case " $line " in *" vt.global_cursor_default="*) ;; *) line="$line vt.global_cursor_default=0" ;; esac
+	case " $line " in *" consoleblank="*) ;; *) line="$line consoleblank=0" ;; esac
 	echo "$line" | sed 's/^ *//'
 }
 

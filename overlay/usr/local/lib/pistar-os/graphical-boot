@@ -1,0 +1,12 @@
+# Pi-Star OS graphical-boot sentinel.
+#
+# This file's EXISTENCE is the signal. It tells Pi-Star MCP and the
+# pistar-splash service that this OS has set up for framebuffer output:
+# a quiet kernel console (quiet, logo.nologo, no cursor - see make_cmdline
+# in bootslot.sh) and a free graphics VT (tty7 carries no getty).
+#
+# Only then do they take over tty7 and draw the boot logo and the "connect
+# here" screen. On an older OS, or native Alpine, this file is absent and
+# they stay dormant, leaving the console untouched.
+#
+# Remove it to keep the console plain and stop the framebuffer takeover.
