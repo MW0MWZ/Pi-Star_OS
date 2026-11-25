@@ -40,6 +40,24 @@ other_slot() {
 	esac
 }
 
+# running_slot - the slot whose rootfs is mounted as / right now, i.e. the one
+# the firmware actually booted. Ground truth from the kernel command line, with
+# the mounted / device as a fallback; "" if it cannot be told. This is
+# deliberately NOT active_slot(): after an install, config.txt points at the
+# new slot while this still reports the one that is running - the slot an
+# upgrade must never reformat.
+running_slot() {
+	dev=$(tr ' ' '\n' < /proc/cmdline 2>/dev/null | sed -n 's/^root=//p' | head -1)
+	[ -n "$dev" ] || dev=$(awk '$2 == "/" { print $1; exit }' /proc/mounts 2>/dev/null)
+	for s in A B; do
+		if [ "$dev" = "$(slot_dev "$s")" ]; then
+			echo "$s"
+			return 0
+		fi
+	done
+	echo ""
+}
+
 # boot_prefix - os_prefix currently set in config.txt ("" if none)
 boot_prefix() {
 	sed -n 's/^[[:space:]]*os_prefix[[:space:]]*=[[:space:]]*//p' \

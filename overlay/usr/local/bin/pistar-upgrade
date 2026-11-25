@@ -31,15 +31,25 @@ usage() {
 # shellcheck source=../lib/pistar-os/bootslot.sh
 . /usr/local/lib/pistar-os/bootslot.sh
 
-# The slot the firmware boots is the one os_prefix selects in config.txt;
-# slot.conf is the fallback on the old shared layout.
-BOOT_ACTIVE=$(active_slot)
-[ -n "$BOOT_ACTIVE" ] && ACTIVE_SLOT="$BOOT_ACTIVE"
+# Two different "active" slots, deliberately kept apart:
+#   RUNNING_SLOT - the slot whose rootfs is mounted as / right now (ground
+#                  truth). This is the slot an upgrade must never reformat.
+#   BOOT_TARGET  - the slot config.txt will boot NEXT (os_prefix); "" on the
+#                  old shared layout.
+# They are equal on a settled system and diverge only when an update is
+# installed and waiting for a reboot.
+RUNNING_SLOT=$(running_slot)
+BOOT_TARGET=$(active_slot)
 
-# Determine inactive slot
+# Pick the install target from the RUNNING slot, so the slot we format is
+# always the one not mounted - whatever config.txt claims. Fall back to
+# config.txt, then slot.conf (ACTIVE_SLOT, already sourced), if the running
+# slot cannot be read.
+ACTIVE_SLOT="${RUNNING_SLOT:-${BOOT_TARGET:-$ACTIVE_SLOT}}"
+
 case "$ACTIVE_SLOT" in
 	A|B) INACTIVE_SLOT=$(other_slot "$ACTIVE_SLOT") ;;
-	*) die "invalid ACTIVE_SLOT: $ACTIVE_SLOT" ;;
+	*) die "cannot determine the running slot" ;;
 esac
 INACTIVE_PART=$(slot_part "$INACTIVE_SLOT")
 INACTIVE_DEV=$(slot_dev "$INACTIVE_SLOT")
@@ -116,6 +126,13 @@ check_update() {
 	echo "Active:     Slot $ACTIVE_SLOT"
 	echo "Target:     Slot $INACTIVE_SLOT (partition $INACTIVE_PART)"
 
+	# An update already installed and waiting for a reboot cannot be upgraded
+	# over - report that instead of offering another install.
+	if [ -n "$RUNNING_SLOT" ] && [ -n "$BOOT_TARGET" ] && [ "$RUNNING_SLOT" != "$BOOT_TARGET" ]; then
+		echo "Status:     Reboot pending (an update is installed; reboot to activate)"
+		return 1
+	fi
+
 	if [ -z "$CURRENT_VER" ] || version_gt "$VERSION" "$CURRENT_VER"; then
 		echo "Status:     Update available"
 		return 0
@@ -128,8 +145,31 @@ check_update() {
 install_update() {
 	# Boot files must be per slot, so installing never touches the running
 	# slot's kernel. Older images are migrated by pistar-boot-layout at boot.
-	[ -n "$BOOT_ACTIVE" ] || \
+	[ -n "$BOOT_TARGET" ] || \
 		die "the boot partition still uses the shared layout; reboot once so it can be migrated, then retry"
+
+	# Refuse if an update is already installed and waiting for a reboot: the
+	# running slot and the slot config.txt will boot next have diverged, so a
+	# reboot - not another install - is what is needed. Authoritative and
+	# physical; mirrors the dashboard's own guard.
+	if [ -n "$RUNNING_SLOT" ] && [ -n "$BOOT_TARGET" ] && [ "$RUNNING_SLOT" != "$BOOT_TARGET" ]; then
+		die "an update is already installed and waiting for a reboot (running slot $RUNNING_SLOT, next boot slot $BOOT_TARGET); reboot to activate it before upgrading again"
+	fi
+
+	# The target partition must exist and must not be mounted. The mount check
+	# is the real safety net: whatever the slot bookkeeping says, never make a
+	# filesystem on a mounted device.
+	[ -b "$INACTIVE_DEV" ] || die "inactive slot device $INACTIVE_DEV not found"
+	if awk -v d="$INACTIVE_DEV" '$1 == d { f = 1 } END { exit !f }' /proc/mounts 2>/dev/null; then
+		die "refusing to install: target $INACTIVE_DEV is mounted"
+	fi
+
+	# Enough room in TMP_DIR for the compressed rootfs download plus headroom.
+	mkdir -p "$TMP_DIR"
+	avail_kb=$(df -Pk "$TMP_DIR" 2>/dev/null | awk 'NR == 2 { print $4 }')
+	if [ -n "$avail_kb" ] && [ "$avail_kb" -lt 262144 ]; then
+		die "not enough free space in $TMP_DIR: need ~256 MB, have $((avail_kb / 1024)) MB"
+	fi
 
 	fetch_manifest
 
@@ -156,7 +196,11 @@ install_update() {
 	fi
 	cd /
 
-	# Format inactive partition
+	# Format inactive partition. Re-check the mount state right before mkfs in
+	# case anything changed since the pre-flight checks.
+	if awk -v d="$INACTIVE_DEV" '$1 == d { f = 1 } END { exit !f }' /proc/mounts 2>/dev/null; then
+		die "refusing to format $INACTIVE_DEV: it is mounted"
+	fi
 	echo "Formatting $INACTIVE_DEV..."
 	mkfs.ext4 -q -F "$INACTIVE_DEV"
 
