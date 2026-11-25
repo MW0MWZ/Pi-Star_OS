@@ -18,12 +18,17 @@ DISK_DEV="/dev/mmcblk0"
 PART_NUM=4
 
 start() {
+	# On Alpine e2fsck lives in /sbin while resize2fs and parted are in
+	# /usr/sbin; make sure both directories are searched regardless of how the
+	# init PATH is set, then call the tools by name.
+	PATH="/sbin:/usr/sbin:$PATH"
+
 	ebegin "Checking if /data partition needs resizing"
 
 	# parted reads the ON-DISK partition table
-	PART_END=$(/usr/sbin/parted -ms "$DISK_DEV" unit s print 2>/dev/null | \
+	PART_END=$(parted -ms "$DISK_DEV" unit s print 2>/dev/null | \
 		grep "^${PART_NUM}:" | cut -d: -f3 | tr -d 's')
-	DISK_END=$(/usr/sbin/parted -ms "$DISK_DEV" unit s print 2>/dev/null | \
+	DISK_END=$(parted -ms "$DISK_DEV" unit s print 2>/dev/null | \
 		grep "^${DISK_DEV}:" | cut -d: -f2 | tr -d 's')
 
 	if [ -z "$PART_END" ] || [ -z "$DISK_END" ]; then
@@ -37,7 +42,7 @@ start() {
 	if [ "$SLACK" -ge 32768 ]; then
 		# Phase 1: partition table needs expanding
 		einfo "Expanding /data partition to fill SD card..."
-		/usr/sbin/parted -s "$DISK_DEV" resizepart "$PART_NUM" 100%
+		parted -s "$DISK_DEV" resizepart "$PART_NUM" 100%
 		einfo "Rebooting so kernel picks up new partition size..."
 		eend 0
 		sync
@@ -46,15 +51,31 @@ start() {
 		return 0
 	fi
 
-	# Phase 2: partition is expanded, grow the filesystem
-	# The kernel read the correct partition size at boot, so resize2fs
-	# will see the full size. P4 is not yet mounted (before localmount).
-	/usr/sbin/e2fsck -fy "$DATA_DEV" >/dev/null 2>&1 || true
-	/usr/sbin/resize2fs "$DATA_DEV"
+	# Phase 2: partition is expanded, grow the filesystem.
+	# The kernel read the correct partition size at boot, so resize2fs will
+	# see the full size. P4 is not yet mounted (before localmount). resize2fs
+	# refuses ("run e2fsck -f first") on a filesystem that has been mounted
+	# since its last check, so the forced check must run - and must actually
+	# succeed - before it.
+	e2fsck -fy "$DATA_DEV" >/dev/null 2>&1
+	rc=$?
+	# e2fsck: 0 = clean, 1/2 = problems fixed (fine); 4+ = errors remain or it
+	# could not run. Don't resize over an unchecked/broken filesystem.
+	if [ "$rc" -ge 4 ]; then
+		ewarn "e2fsck on $DATA_DEV returned $rc; leaving the resize for next boot"
+		eend 1
+		return 1
+	fi
+
+	if ! resize2fs "$DATA_DEV"; then
+		ewarn "resize2fs failed on $DATA_DEV; leaving the resize for next boot"
+		eend 1
+		return 1
+	fi
 
 	einfo "/data partition resized successfully"
 
-	# Done — disable this service permanently
+	# Only now that it has actually succeeded: disable this service for good.
 	rc-update del pistar-data-resize boot
 
 	eend 0
