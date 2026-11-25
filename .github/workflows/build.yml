@@ -698,11 +698,15 @@ jobs:
         # RASPINE_RELEASE and BUILD_COMMIT let the scheduled check tell
         # whether anything has changed since this image was built.
         RASPINE_RELEASE=$(gh api repos/MW0MWZ/RasPINE/releases/latest -q .tag_name 2>/dev/null || true)
+        # Compressed rootfs size (bytes) so the upgrader can pre-flight the
+        # download against the free space on the target.
+        ROOTFS_SIZE=$(stat -c%s "/tmp/Pi-Star_OS-${VERSION}.rootfs.tar.xz")
         cat > /tmp/manifest.txt << EOF
         VERSION=${VERSION}
         BUILD_DATE=${BUILD_DATE}
         ALPINE_VERSION=${ALPINE_VERSION}
         ROOTFS_FILENAME=Pi-Star_OS-${VERSION}.rootfs.tar.xz
+        ROOTFS_SIZE=${ROOTFS_SIZE}
         RASPINE_RELEASE=${RASPINE_RELEASE}
         BUILD_COMMIT=${{ github.sha }}
         EOF

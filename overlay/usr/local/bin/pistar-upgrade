@@ -69,6 +69,7 @@ fetch_manifest() {
 	VERSION=$(manifest_value VERSION)
 	BUILD_DATE=$(manifest_value BUILD_DATE)
 	ROOTFS_FILENAME=$(manifest_value ROOTFS_FILENAME)
+	ROOTFS_SIZE=$(manifest_value ROOTFS_SIZE)   # compressed bytes, "" on older manifests
 
 	case "$VERSION" in
 		""|.*|*.|*..*|*[!0-9.]*) die "manifest has invalid VERSION: '$VERSION'" ;;
@@ -164,14 +165,22 @@ install_update() {
 		die "refusing to install: target $INACTIVE_DEV is mounted"
 	fi
 
-	# Enough room in TMP_DIR for the compressed rootfs download plus headroom.
-	mkdir -p "$TMP_DIR"
-	avail_kb=$(df -Pk "$TMP_DIR" 2>/dev/null | awk 'NR == 2 { print $4 }')
-	if [ -n "$avail_kb" ] && [ "$avail_kb" -lt 262144 ]; then
-		die "not enough free space in $TMP_DIR: need ~256 MB, have $((avail_kb / 1024)) MB"
-	fi
-
 	fetch_manifest
+
+	# Enough room in TMP_DIR for the compressed rootfs download. Prefer the
+	# exact size the manifest advertises (plus headroom for the checksum file
+	# and filesystem overhead); fall back to a fixed floor for older manifests
+	# that carry no size.
+	mkdir -p "$TMP_DIR"
+	need_kb=262144
+	case "$ROOTFS_SIZE" in
+		''|*[!0-9]*) ;;
+		*) need_kb=$(( ROOTFS_SIZE / 1024 + 32768 )) ;;
+	esac
+	avail_kb=$(df -Pk "$TMP_DIR" 2>/dev/null | awk 'NR == 2 { print $4 }')
+	if [ -n "$avail_kb" ] && [ "$avail_kb" -lt "$need_kb" ]; then
+		die "not enough free space in $TMP_DIR: need ~$((need_kb / 1024)) MB, have $((avail_kb / 1024)) MB"
+	fi
 
 	ROOTFS_FILE="$ROOTFS_FILENAME"
 	SHA_FILE="${ROOTFS_FILE}.sha256"
