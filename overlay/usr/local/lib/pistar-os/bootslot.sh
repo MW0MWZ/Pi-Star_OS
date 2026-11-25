@@ -58,6 +58,17 @@ running_slot() {
 	echo ""
 }
 
+# root_dev - the real block device mounted as /, resolving the /dev/root alias
+# (the kernel often lists / as /dev/root in /proc/mounts rather than the real
+# partition). "" if it cannot be determined.
+root_dev() {
+	dev=$(awk '$2 == "/" { print $1; exit }' /proc/mounts 2>/dev/null)
+	if [ "$dev" = "/dev/root" ]; then
+		dev=$(readlink -f /dev/root 2>/dev/null || echo "$dev")
+	fi
+	echo "$dev"
+}
+
 # boot_prefix - os_prefix currently set in config.txt ("" if none)
 boot_prefix() {
 	sed -n 's/^[[:space:]]*os_prefix[[:space:]]*=[[:space:]]*//p' \

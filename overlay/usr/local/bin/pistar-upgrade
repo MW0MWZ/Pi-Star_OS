@@ -161,8 +161,9 @@ install_update() {
 	# is the real safety net: whatever the slot bookkeeping says, never make a
 	# filesystem on a mounted device.
 	[ -b "$INACTIVE_DEV" ] || die "inactive slot device $INACTIVE_DEV not found"
-	if awk -v d="$INACTIVE_DEV" '$1 == d { f = 1 } END { exit !f }' /proc/mounts 2>/dev/null; then
-		die "refusing to install: target $INACTIVE_DEV is mounted"
+	if [ "$INACTIVE_DEV" = "$(root_dev)" ] || \
+	   awk -v d="$INACTIVE_DEV" '$1 == d { f = 1 } END { exit !f }' /proc/mounts 2>/dev/null; then
+		die "refusing to install: target $INACTIVE_DEV is the running root or is mounted"
 	fi
 
 	fetch_manifest
@@ -205,10 +206,11 @@ install_update() {
 	fi
 	cd /
 
-	# Format inactive partition. Re-check the mount state right before mkfs in
-	# case anything changed since the pre-flight checks.
-	if awk -v d="$INACTIVE_DEV" '$1 == d { f = 1 } END { exit !f }' /proc/mounts 2>/dev/null; then
-		die "refusing to format $INACTIVE_DEV: it is mounted"
+	# Format inactive partition. Re-check right before mkfs in case anything
+	# changed since the pre-flight checks.
+	if [ "$INACTIVE_DEV" = "$(root_dev)" ] || \
+	   awk -v d="$INACTIVE_DEV" '$1 == d { f = 1 } END { exit !f }' /proc/mounts 2>/dev/null; then
+		die "refusing to format $INACTIVE_DEV: it is the running root or is mounted"
 	fi
 	echo "Formatting $INACTIVE_DEV..."
 	mkfs.ext4 -q -F "$INACTIVE_DEV"
