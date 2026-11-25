@@ -746,13 +746,20 @@ jobs:
         path: artifacts/
         retention-days: 90
 
-    - name: Create Release
+    # Published atomically: all assets go to a DRAFT release first. A draft
+    # is not served at /releases/latest/download/, so pistar-upgrade --check
+    # cannot see the new manifest.txt until every file (image, rootfs,
+    # checksums) is fully uploaded. The next step then flips the draft to
+    # published in one operation, so a check never lands a half-uploaded
+    # release mid-build.
+    - name: Upload Release assets (draft)
+      id: draft_release
       if: github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v3
       with:
         tag_name: ${{ env.VERSION }}
         name: Pi-Star OS ${{ env.VERSION }}
-        draft: false
+        draft: true
         prerelease: false
         files: |
           artifacts/Pi-Star_OS-*.img.xz
@@ -788,3 +795,20 @@ jobs:
           ```
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # Flip the fully-uploaded draft to published: this is the single moment
+    # the release becomes "latest", so --check only ever sees a complete set.
+    # Done by release ID (not tag): a draft has no git tag yet, so a
+    # tag-based lookup could miss it and create a second release.
+    - name: Publish Release
+      if: github.ref == 'refs/heads/main'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        RELEASE_ID: ${{ steps.draft_release.outputs.id }}
+      run: |
+        set -euo pipefail
+        test -n "$RELEASE_ID"
+        gh api --method PATCH \
+          -H "Accept: application/vnd.github+json" \
+          "repos/${{ github.repository }}/releases/$RELEASE_ID" \
+          -F draft=false -f make_latest=true
