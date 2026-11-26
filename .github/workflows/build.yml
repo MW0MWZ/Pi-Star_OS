@@ -135,8 +135,7 @@ jobs:
           mkpart primary fat32 1MiB "${BOOT_SIZE}" \
           mkpart primary ext4 "${BOOT_SIZE}" "${SLOT_A_END}" \
           mkpart primary ext4 "${SLOT_A_END}" "${SLOT_B_END}" \
-          mkpart primary ext4 "${SLOT_B_END}" 100% \
-          set 1 boot on
+          mkpart primary ext4 "${SLOT_B_END}" 100%
 
     - name: Set up loop device and format partitions
       run: |
