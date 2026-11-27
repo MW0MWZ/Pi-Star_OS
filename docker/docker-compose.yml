@@ -1,0 +1,80 @@
+# Pi-Star on x86_64 under Dokploy (Compose service, type "Docker Compose",
+# not "Stack": Swarm cannot pass USB devices). Compose path:
+# ./docker/docker-compose.yml. The hotspot must be plugged into the server
+# Dokploy deploys to. See docker/DOKPLOY.md.
+#
+# Also works without Dokploy: `docker compose -f docker/docker-compose.yml up`
+# (drop the dokploy-network bits, or create the network first).
+
+x-persist: &persist
+  - etc-mmdvmhost:/etc/mmdvmhost
+  - etc-dmrclients:/etc/dmrclients
+  - etc-dstarclients:/etc/dstarclients
+  - etc-ysfclients:/etc/ysfclients
+  - etc-nxdnclients:/etc/nxdnclients
+  - etc-p25clients:/etc/p25clients
+  - etc-fmclients:/etc/fmclients
+  - etc-aprsclients:/etc/aprsclients
+  - etc-pocsagclients:/etc/pocsagclients
+  - etc-dstarrepeater:/etc/dstarrepeater
+  - etc-pistar-mcp:/etc/pistar-mcp
+  - var-lib-pistar-mcp:/var/lib/pistar-mcp
+  # Host /dev, as run.sh --hotplug: the modem keeps working when it
+  # re-enumerates (firmware flashing, unplug/replug, ttyACM0 -> ttyACM1)
+  - /dev:/dev
+
+services:
+  pistar:
+    build:
+      context: .
+    hostname: pi-star
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-UTC}
+    tmpfs:
+      - /run
+    volumes: *persist
+    # ttyACM (166), ttyUSB (188), raw USB (189, dfu-util/stm32flash)
+    device_cgroup_rules:
+      - "c 166:* rmw"
+      - "c 188:* rmw"
+      - "c 189:* rmw"
+    # Optional direct LAN access, bypassing Traefik (the dashboard
+    # redirects :80 to :443 itself)
+    ports:
+      - "${HTTPS_PORT:-8443}:443"
+    networks:
+      - dokploy-network
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.pistar.rule=Host(`${PISTAR_DOMAIN}`)
+      - traefik.http.routers.pistar.entrypoints=websecure
+      - traefik.http.routers.pistar.tls.certresolver=letsencrypt
+      # MCP redirects plain HTTP to HTTPS and ignores X-Forwarded-Proto,
+      # so Traefik must speak HTTPS to :443 (self-signed cert)
+      - traefik.http.services.pistar.loadbalancer.server.port=443
+      - traefik.http.services.pistar.loadbalancer.server.scheme=https
+      - traefik.http.services.pistar.loadbalancer.serverstransport=pistar-insecure@file
+      - traefik.http.routers.pistar-http.rule=Host(`${PISTAR_DOMAIN}`)
+      - traefik.http.routers.pistar-http.entrypoints=web
+      - traefik.http.routers.pistar-http.middlewares=redirect-to-https@file
+      - traefik.http.routers.pistar-http.service=pistar
+
+volumes:
+  etc-mmdvmhost:
+  etc-dmrclients:
+  etc-dstarclients:
+  etc-ysfclients:
+  etc-nxdnclients:
+  etc-p25clients:
+  etc-fmclients:
+  etc-aprsclients:
+  etc-pocsagclients:
+  etc-dstarrepeater:
+  etc-pistar-mcp:
+  var-lib-pistar-mcp:
+
+networks:
+  dokploy-network:
+    external: true

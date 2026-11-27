@@ -1,0 +1,8 @@
+# Traefik dynamic config for the Dokploy deployment: copy to
+# /etc/dokploy/traefik/dynamic/pistar.yml (Dokploy UI: Traefik -> File
+# System -> dynamic). The dashboard serves HTTPS with its own self-signed
+# certificate, so Traefik must not verify it.
+http:
+  serversTransports:
+    pistar-insecure:
+      insecureSkipVerify: true
